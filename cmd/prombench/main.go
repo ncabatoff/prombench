@@ -3,14 +3,21 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"github.com/prometheus/client_golang/api/prometheus"
 	"github.com/prometheus/common/model"
+	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
+)
+
+const (
+	sdCfgDir = "sd_configs"
 )
 
 func main() {
@@ -19,16 +26,18 @@ func main() {
 			"First port to assign to load exporters.")
 		rmdata = flag.Bool("rmdata", false,
 			"delete the data dir before starting Prometheus")
+		prometheusPath = flag.String("prometheus-path", "prometheus",
+			"path to prometheus executable")
+		scrapeInterval = flag.Duration("scrape-interval", time.Second,
+			"scrape interval")
 	)
 	flag.Parse()
 	log.Printf("will run exporters starting from port %d", *firstPort)
 
-	promdir := "../../../../prometheus/prometheus/"
-	// TODO data dir should be arg?
 	setupDataDir("data", *rmdata)
-	// setupPrometheusConfig(dir)
+	setupPrometheusConfig(*scrapeInterval)
 	mainctx := context.Background()
-	stopPrometheus := startPrometheus(mainctx, promdir)
+	stopPrometheus := startPrometheus(mainctx, *prometheusPath)
 	sums := make(chan int)
 	stopExporters := startExporters(mainctx, *firstPort, sums)
 	time.Sleep(10 * time.Second)
@@ -60,17 +69,41 @@ func setupDataDir(dir string, rm bool) {
 	}
 }
 
-func setupPrometheusConfig(promdir string) {
+func setupPrometheusConfig(scrapeInterval time.Duration) {
+	cfgstr := fmt.Sprintf(`global:
+  scrape_interval: '%s'
+
+scrape_configs:
+  - job_name: 'test'
+    file_sd_configs:
+      - files:
+        - '%s/*.json'`, scrapeInterval, sdCfgDir)
+
+	cfgfilename := "prometheus.yml"
+	if err := ioutil.WriteFile(cfgfilename, []byte(cfgstr), 0600); err != nil {
+		log.Fatalf("unable to write config file '%s': %v", cfgfilename, err)
+	}
+	if err := os.Mkdir(sdCfgDir, 0700); err != nil && !os.IsExist(err) {
+		log.Fatalf("unable to create sd_config dir '%s': %v", sdCfgDir, err)
+	}
+	// TODO clean out sd_config dir
 }
 
-func startPrometheus(ctx context.Context, promdir string) context.CancelFunc {
+func startPrometheus(ctx context.Context, prompath string) context.CancelFunc {
 	log.Print("starting prometheus")
 	myctx, cancel := context.WithCancel(ctx)
-	promcmd := exec.CommandContext(myctx, promdir+"prometheus")
+	promcmd := exec.CommandContext(myctx, prompath)
 	done := make(chan struct{})
+	promlog := "prometheus.log"
+	logfile, err := os.Create(promlog)
+	if err != nil {
+		log.Fatalf("unable to open log file '%s' for writing: %v", promlog, err)
+	}
+	promcmd.Stdout = logfile
+	promcmd.Stderr = logfile
 	go func() {
-		output, err := promcmd.CombinedOutput()
-		log.Printf("Prometheus returned %v; output:\n%s", err, output)
+		err := promcmd.Run()
+		log.Printf("Prometheus returned %v", err)
 		done <- struct{}{}
 	}()
 	return func() {
@@ -83,7 +116,20 @@ func startPrometheus(ctx context.Context, promdir string) context.CancelFunc {
 func startExporters(ctx context.Context, firstport int, sum chan<- int) context.CancelFunc {
 	log.Print("starting exporters")
 	myctx, cancel := context.WithCancel(ctx)
-	cmd := exec.CommandContext(myctx, "../load_exporter/load_exporter")
+	port := 10000 // TODO make argument
+	addr := fmt.Sprintf("localhost:%d", port)
+	sdjson := fmt.Sprintf(`[
+  {
+    "targets": [ "%s" ],
+    "labels": {
+    }
+  }
+]`, addr)
+	cfgfilename := filepath.Join(sdCfgDir, "load.json")
+	if err := ioutil.WriteFile(cfgfilename, []byte(sdjson), 0600); err != nil {
+		log.Fatalf("unable to write sd_config file '%s': %v", cfgfilename, err)
+	}
+	cmd := exec.CommandContext(myctx, "../load_exporter/load_exporter", "-web.listen-address", addr)
 	go func() {
 		output, err := cmd.Output()
 		if err != nil {
