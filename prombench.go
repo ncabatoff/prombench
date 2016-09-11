@@ -2,26 +2,25 @@ package prombench
 
 import (
 	"context"
-	"fmt"
 	"github.com/ncabatoff/prombench/harness"
+	"github.com/ncabatoff/prombench/loadgen"
 	"github.com/prometheus/client_golang/api/prometheus"
 	"github.com/prometheus/common/model"
-	"io/ioutil"
 	"log"
-	"os/exec"
-	"path/filepath"
-	"strconv"
-	"syscall"
 	"time"
+)
+
+const (
+	SdCfgDir = "sd_configs"
 )
 
 func Run(cfg harness.Config) {
 	harness.SetupDataDir("data", cfg.Rmdata)
-	harness.SetupPrometheusConfig(cfg.ScrapeInterval)
+	harness.SetupPrometheusConfig(SdCfgDir, cfg.ScrapeInterval)
 	mainctx := context.Background()
 	stopPrometheus := harness.StartPrometheus(mainctx, cfg.PrometheusPath)
 	sums := make(chan int)
-	stopExporter := startExporter(mainctx, cfg.FirstPort, sums)
+	stopExporter := loadgen.StartExporter(SdCfgDir, mainctx, cfg.FirstPort, sums)
 	time.Sleep(10 * time.Second)
 	stopExporter()
 	sum := <-sums
@@ -32,41 +31,6 @@ func Run(cfg harness.Config) {
 		log.Printf("Expected %d, got %d", sum, qresult)
 	}
 	stopPrometheus()
-}
-
-func startExporter(ctx context.Context, port int, sum chan<- int) context.CancelFunc {
-	log.Print("starting exporters")
-	myctx, cancel := context.WithCancel(ctx)
-	addr := fmt.Sprintf("localhost:%d", port)
-	sdjson := fmt.Sprintf(`[
-  {
-    "targets": [ "%s" ],
-    "labels": {
-    }
-  }
-]`, addr)
-	cfgfilename := filepath.Join(harness.SdCfgDir, "load.json")
-	if err := ioutil.WriteFile(cfgfilename, []byte(sdjson), 0600); err != nil {
-		log.Fatalf("unable to write sd_config file '%s': %v", cfgfilename, err)
-	}
-	cmd := exec.CommandContext(myctx, "../load_exporter/load_exporter", "-web.listen-address", addr)
-	go func() {
-		output, err := cmd.Output()
-		if err != nil {
-			log.Printf("load_exporter returned %v; output:\n%s", err, output)
-		}
-		thissum, err := strconv.Atoi(string(output))
-		if err != nil {
-			log.Printf("error parsing load_exporter output '%s', error: %v", string(output), err)
-		}
-		sum <- thissum
-	}()
-	return func() {
-		log.Print("stopping exporters")
-		cmd.Process.Signal(syscall.SIGTERM)
-		time.Sleep(time.Millisecond * 100)
-		cancel()
-	}
 }
 
 func queryPrometheus() int {

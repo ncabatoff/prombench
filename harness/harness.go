@@ -10,10 +10,6 @@ import (
 	"time"
 )
 
-const (
-	SdCfgDir = "sd_configs"
-)
-
 type Config struct {
 	Rmdata         bool
 	FirstPort      int
@@ -38,7 +34,7 @@ func SetupDataDir(dir string, rm bool) {
 	}
 }
 
-func SetupPrometheusConfig(scrapeInterval time.Duration) {
+func SetupPrometheusConfig(sdCfgDir string, scrapeInterval time.Duration) {
 	cfgstr := fmt.Sprintf(`global:
   scrape_interval: '%s'
 
@@ -46,14 +42,14 @@ scrape_configs:
   - job_name: 'test'
     file_sd_configs:
       - files:
-        - '%s/*.json'`, scrapeInterval, SdCfgDir)
+        - '%s/*.json'`, scrapeInterval, sdCfgDir)
 
 	cfgfilename := "prometheus.yml"
 	if err := ioutil.WriteFile(cfgfilename, []byte(cfgstr), 0600); err != nil {
 		log.Fatalf("unable to write config file '%s': %v", cfgfilename, err)
 	}
-	if err := os.Mkdir(SdCfgDir, 0700); err != nil && !os.IsExist(err) {
-		log.Fatalf("unable to create sd_config dir '%s': %v", SdCfgDir, err)
+	if err := os.Mkdir(sdCfgDir, 0700); err != nil && !os.IsExist(err) {
+		log.Fatalf("unable to create sd_config dir '%s': %v", sdCfgDir, err)
 	}
 	// TODO clean out sd_config dir
 }
