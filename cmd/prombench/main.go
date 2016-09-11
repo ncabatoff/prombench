@@ -39,11 +39,11 @@ func main() {
 	mainctx := context.Background()
 	stopPrometheus := startPrometheus(mainctx, *prometheusPath)
 	sums := make(chan int)
-	stopExporters := startExporters(mainctx, *firstPort, sums)
+	stopExporter := startExporter(mainctx, *firstPort, sums)
 	time.Sleep(10 * time.Second)
-	stopExporters()
+	stopExporter()
 	sum := <-sums
-	log.Printf("sum=%d", sum)
+	log.Printf("sum reported by exporters: %d", sum)
 	time.Sleep(1 * time.Second)
 	qresult := queryPrometheus()
 	if sum != qresult {
@@ -113,10 +113,9 @@ func startPrometheus(ctx context.Context, prompath string) context.CancelFunc {
 	}
 }
 
-func startExporters(ctx context.Context, firstport int, sum chan<- int) context.CancelFunc {
+func startExporter(ctx context.Context, port int, sum chan<- int) context.CancelFunc {
 	log.Print("starting exporters")
 	myctx, cancel := context.WithCancel(ctx)
-	port := 10000 // TODO make argument
 	addr := fmt.Sprintf("localhost:%d", port)
 	sdjson := fmt.Sprintf(`[
   {
@@ -161,7 +160,7 @@ func queryPrometheus() int {
 	if err != nil {
 		log.Fatalf("error performing query: %v", err)
 	}
-	log.Printf("%v", result)
+	log.Printf("prometheus query result: %v", result)
 	vect := result.(model.Vector)
 	return int(vect[0].Value)
 }
