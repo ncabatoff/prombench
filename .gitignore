@@ -22,3 +22,13 @@ _testmain.go
 *.exe
 *.test
 *.prof
+
+.*.sw?
+
+cmd/prombench/prombench
+cmd/load_exporter/load_exporter
+cmd/prombench/data
+cmd/prombench/prometheus.yml
+cmd/prombench/prometheus.log
+cmd/prombench/sd_configs
+
