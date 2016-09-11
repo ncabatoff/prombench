@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"github.com/ncabatoff/prombench"
+	"github.com/ncabatoff/prombench/harness"
 	"time"
 )
 
@@ -18,7 +19,7 @@ func main() {
 			"scrape interval")
 	)
 	flag.Parse()
-	prombench.Run(prombench.Config{
+	prombench.Run(harness.Config{
 		FirstPort:      *firstPort,
 		Rmdata:         *rmdata,
 		PrometheusPath: *prometheusPath,
