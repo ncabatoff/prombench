@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"syscall"
 	"time"
 )
 
@@ -16,6 +17,7 @@ type Config struct {
 	NumExporters   int
 	PrometheusPath string
 	ScrapeInterval time.Duration
+	TestDuration   time.Duration
 }
 
 func SetupDataDir(dir string, rm bool) {
@@ -40,6 +42,14 @@ func SetupPrometheusConfig(sdCfgDir string, scrapeInterval time.Duration) {
   scrape_interval: '%s'
 
 scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'prombench'
+    static_configs:
+      - targets: ['localhost:9999']
+
   - job_name: 'test'
     file_sd_configs:
       - files:
@@ -67,13 +77,19 @@ func StartPrometheus(ctx context.Context, prompath string) context.CancelFunc {
 	promcmd.Stdout = logfile
 	promcmd.Stderr = logfile
 	go func() {
-		err := promcmd.Run()
-		log.Printf("Prometheus returned %v", err)
+		if err := promcmd.Run(); err != nil {
+			log.Printf("Prometheus returned %v", err)
+		}
 		done <- struct{}{}
 	}()
 	return func() {
-		// TODO graceful stop of Prometheus rather than kill -9
-		cancel()
-		<-done
+		promcmd.Process.Signal(syscall.SIGTERM)
+		timer := time.NewTimer(30 * time.Second)
+		select {
+		case <-timer.C:
+			cancel()
+			<-done
+		case <-done:
+		}
 	}
 }

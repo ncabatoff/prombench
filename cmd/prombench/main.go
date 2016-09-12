@@ -4,6 +4,8 @@ import (
 	"flag"
 	"github.com/ncabatoff/prombench"
 	"github.com/ncabatoff/prombench/harness"
+	"github.com/prometheus/client_golang/prometheus"
+	"net/http"
 	"time"
 )
 
@@ -19,12 +21,18 @@ func main() {
 			"path to prometheus executable")
 		scrapeInterval = flag.Duration("scrape-interval", time.Second,
 			"scrape interval")
+		testDuration = flag.Duration("test-duration", time.Minute,
+			"test duration")
 	)
 	flag.Parse()
+	http.Handle("/metrics", prometheus.Handler())
+	go http.ListenAndServe("localhost:9999", nil)
 	prombench.Run(harness.Config{
 		FirstPort:      *firstPort,
 		NumExporters:   *numExporters,
 		Rmdata:         *rmdata,
 		PrometheusPath: *prometheusPath,
-		ScrapeInterval: *scrapeInterval})
+		ScrapeInterval: *scrapeInterval,
+		TestDuration:   *testDuration,
+	})
 }
