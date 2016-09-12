@@ -15,16 +15,22 @@ const (
 )
 
 func Run(cfg harness.Config) {
+	mainctx := context.Background()
+	genbuilder := func() loadgen.MetricsGenerator {
+		return loadgen.NewTestCollector(100, 100)
+	}
+	le := loadgen.NewLoadExporterInternal(mainctx, SdCfgDir, genbuilder)
+	if err := le.AddTarget(10000); err != nil {
+		log.Fatalf("Error starting exporter: %v", err)
+	}
+
 	harness.SetupDataDir("data", cfg.Rmdata)
 	harness.SetupPrometheusConfig(SdCfgDir, cfg.ScrapeInterval)
-	mainctx := context.Background()
 	stopPrometheus := harness.StartPrometheus(mainctx, cfg.PrometheusPath)
-	sums := make(chan int)
-	stopExporter := loadgen.StartExporter(SdCfgDir, mainctx, cfg.FirstPort, sums)
+
 	time.Sleep(10 * time.Second)
-	stopExporter()
-	sum := <-sums
-	log.Printf("sum reported by exporters: %d", sum)
+	sum, err := le.Stop()
+	log.Printf("sum=%d, err=%v", sum, err)
 	time.Sleep(1 * time.Second)
 	qresult := queryPrometheus()
 	if sum != qresult {
@@ -47,5 +53,8 @@ func queryPrometheus() int {
 	}
 	log.Printf("prometheus query result: %v", result)
 	vect := result.(model.Vector)
-	return int(vect[0].Value)
+	if len(vect) > 0 {
+		return int(vect[0].Value)
+	}
+	return -1
 }
