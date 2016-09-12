@@ -13,6 +13,7 @@ import (
 type Config struct {
 	Rmdata         bool
 	FirstPort      int
+	NumExporters   int
 	PrometheusPath string
 	ScrapeInterval time.Duration
 }
@@ -55,7 +56,6 @@ scrape_configs:
 }
 
 func StartPrometheus(ctx context.Context, prompath string) context.CancelFunc {
-	log.Print("starting prometheus")
 	myctx, cancel := context.WithCancel(ctx)
 	promcmd := exec.CommandContext(myctx, prompath)
 	done := make(chan struct{})
@@ -72,7 +72,7 @@ func StartPrometheus(ctx context.Context, prompath string) context.CancelFunc {
 		done <- struct{}{}
 	}()
 	return func() {
-		log.Print("stopping prometheus")
+		// TODO graceful stop of Prometheus rather than kill -9
 		cancel()
 		<-done
 	}

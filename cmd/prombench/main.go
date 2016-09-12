@@ -11,6 +11,8 @@ func main() {
 	var (
 		firstPort = flag.Int("first-port", 10000,
 			"First port to assign to load exporters.")
+		numExporters = flag.Int("num-exporters", 3,
+			"Number of exporters to run.")
 		rmdata = flag.Bool("rmdata", false,
 			"delete the data dir before starting Prometheus")
 		prometheusPath = flag.String("prometheus-path", "prometheus",
@@ -21,6 +23,7 @@ func main() {
 	flag.Parse()
 	prombench.Run(harness.Config{
 		FirstPort:      *firstPort,
+		NumExporters:   *numExporters,
 		Rmdata:         *rmdata,
 		PrometheusPath: *prometheusPath,
 		ScrapeInterval: *scrapeInterval})

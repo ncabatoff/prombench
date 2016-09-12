@@ -20,8 +20,10 @@ func Run(cfg harness.Config) {
 		return loadgen.NewTestCollector(100, 100)
 	}
 	le := loadgen.NewLoadExporterInternal(mainctx, SdCfgDir, genbuilder)
-	if err := le.AddTarget(10000); err != nil {
-		log.Fatalf("Error starting exporter: %v", err)
+	for i := 0; i < cfg.NumExporters; i++ {
+		if err := le.AddTarget(cfg.FirstPort + i); err != nil {
+			log.Fatalf("Error starting exporter: %v", err)
+		}
 	}
 
 	harness.SetupDataDir("data", cfg.Rmdata)

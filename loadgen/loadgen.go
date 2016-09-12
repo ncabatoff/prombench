@@ -121,7 +121,6 @@ func (lei *LoadExporterInternal) start(addr string) error {
 			log.Printf("error stopping HTTP server: %v", err)
 		}
 		sum := gen.Sum()
-		log.Printf("sum=%d", sum)
 		lei.sumchan <- sum
 		lei.wg.Done()
 	}()
