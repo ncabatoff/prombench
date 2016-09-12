@@ -29,15 +29,17 @@ func Run(cfg harness.Config) {
 
 	harness.SetupDataDir("data", cfg.Rmdata)
 	harness.SetupPrometheusConfig(SdCfgDir, cfg.ScrapeInterval)
-	stopPrometheus := harness.StartPrometheus(mainctx, cfg.PrometheusPath)
+	stopPrometheus := harness.StartPrometheus(mainctx, cfg.PrometheusPath, cfg.ExtraArgs)
 
-	startTime := time.Now().Truncate(time.Second)
+	startTime := time.Now().Truncate(time.Minute)
 	time.Sleep(cfg.TestDuration)
 	expectedSum, err := le.Stop()
 	log.Printf("sum=%d, err=%v", expectedSum, err)
+	// TODO make delay before query configurable
 	time.Sleep(5 * time.Second)
-	ttime := time.Now().Truncate(time.Second).Sub(startTime) + time.Second
-	query := fmt.Sprintf(`sum(sum_over_time({__name__=~"test.+"}[%v]))`, ttime)
+	ttime := time.Since(startTime)
+	ttimestr := fmt.Sprintf("%ds", int(1+ttime.Seconds()))
+	query := fmt.Sprintf(`sum(sum_over_time({__name__=~"test.+"}[%s]))`, ttimestr)
 	vect := queryPrometheusVector("http://localhost:9090", query)
 	actualSum := -1
 	if len(vect) > 0 {

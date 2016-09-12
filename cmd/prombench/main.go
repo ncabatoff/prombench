@@ -34,5 +34,6 @@ func main() {
 		PrometheusPath: *prometheusPath,
 		ScrapeInterval: *scrapeInterval,
 		TestDuration:   *testDuration,
+		ExtraArgs:      flag.Args(),
 	})
 }

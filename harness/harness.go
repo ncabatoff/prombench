@@ -18,16 +18,15 @@ type Config struct {
 	PrometheusPath string
 	ScrapeInterval time.Duration
 	TestDuration   time.Duration
+	ExtraArgs      []string
 }
 
 func SetupDataDir(dir string, rm bool) {
 	_, err := os.Open(dir)
 	if os.IsNotExist(err) {
-		log.Print("data dir already absent")
 	} else if err != nil {
 		log.Fatalf("error opening data dir: %v", err)
 	} else if rm {
-		log.Print("removing data dir")
 		rmcmd := exec.Command("rm", "-rf", dir)
 		if err := rmcmd.Run(); err != nil {
 			log.Fatalf("error deleting data dir: %v", err)
@@ -65,25 +64,26 @@ scrape_configs:
 	// TODO clean out sd_config dir
 }
 
-func StartPrometheus(ctx context.Context, prompath string) context.CancelFunc {
+func StartPrometheus(ctx context.Context, prompath string, promargs []string) context.CancelFunc {
 	myctx, cancel := context.WithCancel(ctx)
-	promcmd := exec.CommandContext(myctx, prompath)
+	cmd := exec.CommandContext(myctx, prompath, promargs...)
 	done := make(chan struct{})
 	promlog := "prometheus.log"
 	logfile, err := os.Create(promlog)
 	if err != nil {
 		log.Fatalf("unable to open log file '%s' for writing: %v", promlog, err)
 	}
-	promcmd.Stdout = logfile
-	promcmd.Stderr = logfile
+	cmd.Stdout = logfile
+	cmd.Stderr = logfile
 	go func() {
-		if err := promcmd.Run(); err != nil {
+		log.Printf("running Prometheus: %s %v", prompath, promargs)
+		if err := cmd.Run(); err != nil {
 			log.Printf("Prometheus returned %v", err)
 		}
 		done <- struct{}{}
 	}()
 	return func() {
-		promcmd.Process.Signal(syscall.SIGTERM)
+		cmd.Process.Signal(syscall.SIGTERM)
 		timer := time.NewTimer(30 * time.Second)
 		select {
 		case <-timer.C:
