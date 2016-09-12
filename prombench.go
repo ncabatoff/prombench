@@ -18,7 +18,7 @@ const (
 func Run(cfg harness.Config) {
 	mainctx := context.Background()
 	genbuilder := func() loadgen.MetricsGenerator {
-		return loadgen.NewTestCollector(100, 100)
+		return loadgen.NewIncCollector(100, 100)
 	}
 	le := loadgen.NewLoadExporterInternal(mainctx, SdCfgDir, genbuilder)
 	for i := 0; i < cfg.NumExporters; i++ {
@@ -30,25 +30,27 @@ func Run(cfg harness.Config) {
 	harness.SetupDataDir("data", cfg.Rmdata)
 	harness.SetupPrometheusConfig(SdCfgDir, cfg.ScrapeInterval)
 	stopPrometheus := harness.StartPrometheus(mainctx, cfg.PrometheusPath, cfg.ExtraArgs)
+	defer stopPrometheus()
 
 	startTime := time.Now().Truncate(time.Minute)
 	time.Sleep(cfg.TestDuration)
 	expectedSum, err := le.Stop()
 	log.Printf("sum=%d, err=%v", expectedSum, err)
-	// TODO make delay before query configurable
-	time.Sleep(5 * time.Second)
-	ttime := time.Since(startTime)
-	ttimestr := fmt.Sprintf("%ds", int(1+ttime.Seconds()))
-	query := fmt.Sprintf(`sum(sum_over_time({__name__=~"test.+"}[%s]))`, ttimestr)
-	vect := queryPrometheusVector("http://localhost:9090", query)
-	actualSum := -1
-	if len(vect) > 0 {
-		actualSum = int(vect[0].Value)
-	}
-	if expectedSum != actualSum {
+	for {
+		ttime := time.Since(startTime)
+		ttimestr := fmt.Sprintf("%ds", int(1+ttime.Seconds()))
+		query := fmt.Sprintf(`sum(sum_over_time({__name__=~"test.+"}[%s]))`, ttimestr)
+		vect := queryPrometheusVector("http://localhost:9090", query)
+		actualSum := -1
+		if len(vect) > 0 {
+			actualSum = int(vect[0].Value)
+		}
+		if expectedSum == actualSum {
+			break
+		}
 		log.Printf("Expected %d, got %d", expectedSum, actualSum)
+		time.Sleep(5 * time.Second)
 	}
-	stopPrometheus()
 }
 
 func queryPrometheusVector(url, query string) model.Vector {

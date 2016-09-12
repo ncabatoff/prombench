@@ -6,6 +6,7 @@ import (
 	"github.com/ncabatoff/prombench/harness"
 	"github.com/prometheus/client_golang/prometheus"
 	"net/http"
+	_ "net/http/pprof"
 	"time"
 )
 

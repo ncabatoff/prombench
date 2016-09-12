@@ -27,7 +27,7 @@ func main() {
 	)
 	flag.Parse()
 
-	tc := loadgen.NewTestCollector(*metricCount, *labelCount)
+	tc := loadgen.NewIncCollector(*metricCount, *labelCount)
 	prometheus.MustRegister(tc)
 	sigchan := make(chan os.Signal, 1)
 	signal.Notify(sigchan, syscall.SIGTERM)
