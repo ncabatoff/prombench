@@ -17,6 +17,11 @@ const (
 
 func Run(cfg harness.Config) {
 	mainctx := context.Background()
+	harness.SetupDataDir("data", cfg.Rmdata)
+	harness.SetupPrometheusConfig(SdCfgDir, cfg.ScrapeInterval)
+	stopPrometheus := harness.StartPrometheus(mainctx, cfg.PrometheusPath, cfg.ExtraArgs)
+	defer stopPrometheus()
+
 	genbuilder := func() loadgen.MetricsGenerator {
 		return loadgen.NewIncCollector(100, 100)
 	}
@@ -26,11 +31,6 @@ func Run(cfg harness.Config) {
 			log.Fatalf("Error starting exporter: %v", err)
 		}
 	}
-
-	harness.SetupDataDir("data", cfg.Rmdata)
-	harness.SetupPrometheusConfig(SdCfgDir, cfg.ScrapeInterval)
-	stopPrometheus := harness.StartPrometheus(mainctx, cfg.PrometheusPath, cfg.ExtraArgs)
-	defer stopPrometheus()
 
 	startTime := time.Now().Truncate(time.Minute)
 	time.Sleep(cfg.TestDuration)
