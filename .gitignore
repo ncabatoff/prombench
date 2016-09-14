@@ -27,6 +27,7 @@ _testmain.go
 
 cmd/prombench/prombench
 cmd/load_exporter/load_exporter
+cmd/load_exporter_static/load_exporter_static
 cmd/prombench/data
 cmd/prombench/prometheus.yml
 cmd/prombench/prometheus.log
