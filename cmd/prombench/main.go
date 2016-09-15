@@ -24,6 +24,8 @@ func main() {
 			"scrape interval")
 		testDuration = flag.Duration("test-duration", time.Minute,
 			"test duration")
+		exporter = flag.String("exporter", "inc",
+			"one of: inc, static, randcyclic, oscillate")
 	)
 	flag.Parse()
 	http.Handle("/metrics", prometheus.Handler())
@@ -35,6 +37,7 @@ func main() {
 		PrometheusPath: *prometheusPath,
 		ScrapeInterval: *scrapeInterval,
 		TestDuration:   *testDuration,
+		Exporter:       *exporter,
 		ExtraArgs:      flag.Args(),
 	})
 }

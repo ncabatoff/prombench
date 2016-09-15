@@ -1,6 +1,7 @@
 package loadgen
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"github.com/facebookgo/httpdown"
@@ -25,15 +26,25 @@ type (
 		Sum() int
 	}
 
+	HttpExporter interface {
+		http.Handler
+		Sum() int
+	}
+
+	httpExporter struct {
+		http.Handler
+		MetricsGenerator
+	}
+
 	LoadExporterInternal struct {
-		ctx        context.Context
-		sdcfgdir   string
-		cancel     func()
-		sumchan    chan int
-		totalchan  chan int
-		err        error
-		genbuilder func() MetricsGenerator
-		wg         sync.WaitGroup
+		ctx              context.Context
+		sdcfgdir         string
+		cancel           func()
+		sumchan          chan int
+		totalchan        chan int
+		err              error
+		exporterProvider func() HttpExporter
+		wg               sync.WaitGroup
 	}
 )
 
@@ -56,15 +67,21 @@ func writeSdConfigFile(targetAddr, filename string) error {
 	return nil
 }
 
-func NewLoadExporterInternal(ctx context.Context, sdcfgdir string, genbuilder func() MetricsGenerator) *LoadExporterInternal {
+func NewHttpExporter(mg MetricsGenerator) HttpExporter {
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(mg)
+	return httpExporter{promhttp.HandlerFor(reg, promhttp.HandlerOpts{}), mg}
+}
+
+func NewLoadExporterInternal(ctx context.Context, sdcfgdir string, exporterProvider func() HttpExporter) *LoadExporterInternal {
 	lctx, cancel := context.WithCancel(ctx)
 	lei := &LoadExporterInternal{
-		ctx:        lctx,
-		sdcfgdir:   sdcfgdir,
-		cancel:     cancel,
-		genbuilder: genbuilder,
-		sumchan:    make(chan int),
-		totalchan:  make(chan int),
+		ctx:              lctx,
+		sdcfgdir:         sdcfgdir,
+		cancel:           cancel,
+		exporterProvider: exporterProvider,
+		sumchan:          make(chan int),
+		totalchan:        make(chan int),
 	}
 	go func() {
 		var sum int
@@ -96,11 +113,72 @@ func (lei *LoadExporterInternal) AddTarget(port int) error {
 	return nil
 }
 
+type (
+	dummyResponseWriter struct {
+		bytes.Buffer
+		header http.Header
+		code   int
+		sum    int
+	}
+)
+
+func (d *dummyResponseWriter) Header() http.Header {
+	return d.header
+}
+
+func (d *dummyResponseWriter) WriteHeader(code int) {
+	d.code = code
+}
+
+func newDummyResponseWriter() *dummyResponseWriter {
+	return &dummyResponseWriter{header: make(http.Header)}
+}
+
+type replayHandler struct {
+	dwrs     [2]*dummyResponseWriter
+	mtx      sync.Mutex
+	replays  int
+	sum      int
+	exporter HttpExporter
+}
+
+func NewReplayHandler(e HttpExporter) *replayHandler {
+	return &replayHandler{exporter: e}
+}
+
+// ServeHTTP implements http.Handler.
+func (rh *replayHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	rh.mtx.Lock()
+	idx := rh.replays % 2
+	rh.replays++
+	if rh.dwrs[idx] == nil {
+		rh.dwrs[idx] = newDummyResponseWriter()
+		rh.exporter.ServeHTTP(rh.dwrs[idx], req)
+		rh.dwrs[idx].sum = rh.exporter.Sum()
+		if idx > 0 {
+			rh.dwrs[idx].sum -= rh.dwrs[idx-1].sum
+		}
+	}
+	rh.mtx.Unlock()
+
+	header := w.Header()
+	for k, v := range rh.dwrs[idx].header {
+		header[k] = v
+	}
+
+	// w.WriteHeader(dwr.code)
+	w.Write(rh.dwrs[idx].Bytes())
+	rh.mtx.Lock()
+	rh.sum += rh.dwrs[idx].sum
+	rh.mtx.Unlock()
+}
+
+func (rh *replayHandler) Sum() int {
+	return rh.sum
+}
+
 func (lei *LoadExporterInternal) start(addr string) error {
-	reg := prometheus.NewRegistry()
-	gen := lei.genbuilder()
-	reg.MustRegister(gen)
-	handler := promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
+	handler := lei.exporterProvider()
 	server := &http.Server{Addr: addr, Handler: handler}
 	hd := &httpdown.HTTP{
 		StopTimeout: 10 * time.Second,
@@ -120,8 +198,7 @@ func (lei *LoadExporterInternal) start(addr string) error {
 		if err != nil {
 			log.Printf("error stopping HTTP server: %v", err)
 		}
-		sum := gen.Sum()
-		lei.sumchan <- sum
+		lei.sumchan <- handler.Sum()
 		lei.wg.Done()
 	}()
 

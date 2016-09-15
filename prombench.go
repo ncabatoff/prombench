@@ -22,17 +22,28 @@ func Run(cfg harness.Config) {
 	stopPrometheus := harness.StartPrometheus(mainctx, cfg.PrometheusPath, cfg.ExtraArgs)
 	defer stopPrometheus()
 
-	genbuilder := func() loadgen.MetricsGenerator {
-		return loadgen.NewIncCollector(100, 100)
+	exporterProvider := func() loadgen.HttpExporter {
+		switch cfg.Exporter {
+		case "inc":
+			return loadgen.NewHttpExporter(loadgen.NewIncCollector(100, 100))
+		case "static":
+			return loadgen.NewHttpExporter(loadgen.NewStaticCollector(100, 100))
+		case "randcyclic":
+			return loadgen.NewHttpExporter(loadgen.NewRandCyclicCollector(100, 100, 100000))
+		case "oscillate":
+			return loadgen.NewReplayHandler(loadgen.NewHttpExporter(loadgen.NewIncCollector(100, 100)))
+		default:
+			panic(fmt.Sprintf("invalid exporter name '%s'", cfg.Exporter))
+		}
 	}
-	le := loadgen.NewLoadExporterInternal(mainctx, SdCfgDir, genbuilder)
+	le := loadgen.NewLoadExporterInternal(mainctx, SdCfgDir, exporterProvider)
 	for i := 0; i < cfg.NumExporters; i++ {
 		if err := le.AddTarget(cfg.FirstPort + i); err != nil {
 			log.Fatalf("Error starting exporter: %v", err)
 		}
 	}
 
-	startTime := time.Now().Truncate(time.Minute)
+	startTime := time.Now()
 	time.Sleep(cfg.TestDuration)
 	expectedSum, err := le.Stop()
 	log.Printf("sum=%d, err=%v", expectedSum, err)

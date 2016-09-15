@@ -19,6 +19,7 @@ type Config struct {
 	ScrapeInterval time.Duration
 	TestDuration   time.Duration
 	ExtraArgs      []string
+	Exporter       string
 }
 
 func SetupDataDir(dir string, rm bool) {
@@ -38,18 +39,19 @@ func SetupDataDir(dir string, rm bool) {
 
 func SetupPrometheusConfig(sdCfgDir string, scrapeInterval time.Duration) {
 	cfgstr := fmt.Sprintf(`global:
-  scrape_interval: '%s'
-
 scrape_configs:
   - job_name: 'prometheus'
+    scrape_interval: '1s'
     static_configs:
       - targets: ['localhost:9090']
 
   - job_name: 'prombench'
+    scrape_interval: '1s'
     static_configs:
       - targets: ['localhost:9999']
 
   - job_name: 'test'
+    scrape_interval: '%s'
     file_sd_configs:
       - files:
         - '%s/*.json'`, scrapeInterval, sdCfgDir)
