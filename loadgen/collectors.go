@@ -3,6 +3,7 @@ package loadgen
 import (
 	"fmt"
 	"github.com/prometheus/client_golang/prometheus"
+	"math/rand"
 	"strconv"
 )
 
@@ -86,4 +87,58 @@ func (t *staticCollector) Collect(ch chan<- prometheus.Metric) {
 
 func (t *staticCollector) Sum() int {
 	return len(t.descs) * (t.labelCount) * t.cycle
+}
+
+type (
+	randCyclicCollector struct {
+		descs      []*prometheus.Desc
+		values     []int
+		labelCount int
+		cycle      int
+		sumvalues  int
+	}
+)
+
+func NewRandCyclicCollector(nmetrics, nlabels, maxvalue int) *randCyclicCollector {
+	descs := make([]*prometheus.Desc, nmetrics)
+	for i := 0; i < nmetrics; i++ {
+		metname := fmt.Sprintf("test%d", i)
+		desc := prometheus.NewDesc(metname, metname, []string{"lab"}, nil)
+		descs[i] = desc
+	}
+	values := make([]int, nlabels*nmetrics)
+	sum := 0
+	for i := range values {
+		r := rand.Intn(maxvalue)
+		values[i] = r
+		sum += r
+	}
+	return &randCyclicCollector{descs: descs, values: values, labelCount: nlabels, sumvalues: sum}
+}
+
+// Describe implements prometheus.Collector.
+func (t *randCyclicCollector) Describe(ch chan<- *prometheus.Desc) {
+	for _, desc := range t.descs {
+		ch <- desc
+	}
+}
+
+// Collect implements prometheus.Collector.
+func (t *randCyclicCollector) Collect(ch chan<- prometheus.Metric) {
+	i := t.cycle
+	t.cycle++
+	for _, desc := range t.descs {
+		for j := 0; j < t.labelCount; j++ {
+			if i >= len(t.values) {
+				i = 0
+			}
+			ch <- prometheus.MustNewConstMetric(desc,
+				prometheus.GaugeValue, float64(t.values[i]), strconv.Itoa(j))
+			i++
+		}
+	}
+}
+
+func (t *randCyclicCollector) Sum() int {
+	return t.sumvalues * t.cycle
 }
