@@ -22,19 +22,19 @@ see the tips in the [storage](https://prometheus.io/docs/operating/storage/)
 part of the docs.  You can provide Prometheus command-line arguments at the end
 of the prombench command line, after --, e.g.
 
-  ./prombench -num-exporters 60 -- -storage.local.memory-chunks 2097152 -storage.local.max-chunks-to-persist 1048576 
+    ./prombench -num-exporters 60 -- -storage.local.memory-chunks 2097152 -storage.local.max-chunks-to-persist 1048576 
 
 # Exporters
 
-The -exporter argument selects with load exporter to use.
+The `-exporter` flag selects which load exporter to use.
 
-The inc exporter increments the value of each metric on each scrape.
+The `inc` exporter increments the value of each metric on each scrape.
 
-The static exporter exports unchanging metrics.
+The `static` exporter exports unchanging metrics.
 
-The randcyclic exporter exports semi-random values.
+The `randcyclic` exporter exports semi-random values.
 
-The oscillate exporter toggles between two sets of values on each cycle.
+The `oscillate` exporter toggles between two sets of values on each cycle.
 Unlike the others it doesn't actually go through the standard Prometheus client
 library except during initialization, so it has much lower CPU needs.
 
