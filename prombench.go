@@ -127,8 +127,10 @@ func Run(cfg Config) {
 			default:
 				log.Fatalf("invalid exporter '%s'", exporterSpec.Exporter)
 			}
-			if err := le.AddTarget(cfg.FirstPort+exporterCount, exporter); err != nil {
+			if err := le.AddTarget(cfg.FirstPort+exporterCount, exporterSpec.Exporter.String(), exporter); err != nil {
 				log.Fatalf("Error starting exporter: %v", err)
+			} else {
+				exporterCount++
 			}
 		}
 	}

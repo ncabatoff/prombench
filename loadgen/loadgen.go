@@ -17,7 +17,7 @@ import (
 
 type (
 	LoadExporter interface {
-		AddTarget(port int, exporter Exporter) error
+		AddTarget(port int, job string, exporter Exporter) error
 		Stop() (int, error)
 	}
 
@@ -51,18 +51,19 @@ type (
 	}
 )
 
-func getSdFileContents(targetAddr string) string {
+func getSdFileContents(targetAddr, job string) string {
 	return fmt.Sprintf(`[
   {
     "targets": [ "%s" ],
     "labels": {
+	    "job": "%s"
     }
   }
-]`, targetAddr)
+]`, targetAddr, job)
 }
 
-func writeSdConfigFile(targetAddr, filename string) error {
-	sdcontents := getSdFileContents(targetAddr)
+func writeSdConfigFile(targetAddr, job, filename string) error {
+	sdcontents := getSdFileContents(targetAddr, job)
 	err := ioutil.WriteFile(filename, []byte(sdcontents), 0600)
 	if err != nil {
 		return fmt.Errorf("unable to write sd_config file '%s': %v", filename, err)
@@ -102,10 +103,10 @@ func (lei *LoadExporterInternal) Stop() (int, error) {
 	return <-lei.totalchan, nil
 }
 
-func (lei *LoadExporterInternal) AddTarget(port int, exporter HttpExporter) error {
+func (lei *LoadExporterInternal) AddTarget(port int, job string, exporter HttpExporter) error {
 	targetAddr := fmt.Sprintf("localhost:%d", port)
 	cfgfilename := filepath.Join(lei.sdcfgdir, fmt.Sprintf("load-%d.json", port))
-	if err := writeSdConfigFile(targetAddr, cfgfilename); err != nil {
+	if err := writeSdConfigFile(targetAddr, job, cfgfilename); err != nil {
 
 		return fmt.Errorf("unable to add target: %v", err)
 	}
