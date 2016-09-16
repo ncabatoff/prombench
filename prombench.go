@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"github.com/ncabatoff/prombench/harness"
 	"github.com/ncabatoff/prombench/loadgen"
-	"github.com/prometheus/client_golang/api/prometheus"
+	api "github.com/prometheus/client_golang/api/prometheus"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/model"
 	"log"
 	"strconv"
@@ -102,7 +103,46 @@ func (e *ExporterSpec) Set(v string) error {
 	return nil
 }
 
+type extraPrometheusArgsCollector struct {
+	descs   []*prometheus.Desc
+	metrics []prometheus.Metric
+}
+
+func newExtraPrometheusArgsCollector(args []string) *extraPrometheusArgsCollector {
+	epac := extraPrometheusArgsCollector{}
+	for i := 0; i < len(args)-1; i += 2 {
+		val, err := strconv.Atoi(args[i+1])
+		if err == nil {
+			nodashes := strings.TrimLeft(args[i], "-")
+			name := "prometheus_arg_" + strings.Replace(strings.Replace(nodashes, "-", "_", -1), ".", "_", -1)
+			help := fmt.Sprintf("value of prometheus -%s option", nodashes)
+			desc := prometheus.NewDesc(name, help, nil, nil)
+			epac.descs = append(epac.descs, desc)
+			epac.metrics = append(epac.metrics, prometheus.MustNewConstMetric(desc,
+				prometheus.GaugeValue, float64(val)))
+		}
+	}
+	return &epac
+}
+
+// Describe implements prometheus.Collector.
+func (epac *extraPrometheusArgsCollector) Describe(ch chan<- *prometheus.Desc) {
+	for _, desc := range epac.descs {
+		ch <- desc
+	}
+}
+
+// Collect implements prometheus.Collector.
+func (epac *extraPrometheusArgsCollector) Collect(ch chan<- prometheus.Metric) {
+	for _, metric := range epac.metrics {
+		ch <- metric
+	}
+}
+
 func Run(cfg Config) {
+	if len(cfg.ExtraArgs) > 0 {
+		prometheus.MustRegister(newExtraPrometheusArgsCollector(cfg.ExtraArgs))
+	}
 	mainctx := context.Background()
 	harness.SetupDataDir("data", cfg.Rmdata)
 	harness.SetupPrometheusConfig(SdCfgDir, cfg.ScrapeInterval)
@@ -161,12 +201,12 @@ func startExporters(le loadgen.LoadExporter, esl ExporterSpecList, firstPort int
 }
 
 func queryPrometheusVector(url, query string) model.Vector {
-	cfg := prometheus.Config{Address: url, Transport: prometheus.DefaultTransport}
-	client, err := prometheus.New(cfg)
+	cfg := api.Config{Address: url, Transport: api.DefaultTransport}
+	client, err := api.New(cfg)
 	if err != nil {
 		log.Fatalf("error building client: %v", err)
 	}
-	qapi := prometheus.NewQueryAPI(client)
+	qapi := api.NewQueryAPI(client)
 	log.Printf("issueing query: %s", query)
 	result, err := qapi.Query(context.TODO(), query, time.Now())
 	if err != nil {
