@@ -103,7 +103,13 @@ func (lei *LoadExporterInternal) Stop() (int, error) {
 	return <-lei.totalchan, nil
 }
 
-func (lei *LoadExporterInternal) AddTarget(port int, job string, exporter HttpExporter) error {
+func (lei *LoadExporterInternal) AddTarget(port int, job string, exporter Exporter) error {
+	var hexporter HttpExporter
+	if he, ok := exporter.(HttpExporter); ok {
+		hexporter = he
+	} else {
+		return fmt.Errorf("LoadExporterInternal requires an HttpExporter, got %v", exporter)
+	}
 	targetAddr := fmt.Sprintf("localhost:%d", port)
 	cfgfilename := filepath.Join(lei.sdcfgdir, fmt.Sprintf("load-%d.json", port))
 	if err := writeSdConfigFile(targetAddr, job, cfgfilename); err != nil {
@@ -111,7 +117,7 @@ func (lei *LoadExporterInternal) AddTarget(port int, job string, exporter HttpEx
 		return fmt.Errorf("unable to add target: %v", err)
 	}
 
-	go lei.start(targetAddr, exporter)
+	go lei.start(targetAddr, hexporter)
 
 	return nil
 }

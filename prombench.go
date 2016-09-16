@@ -17,11 +17,11 @@ const (
 	SdCfgDir = "sd_configs"
 )
 
-//go:generate stringer -type=LoadExporter
-type LoadExporter int
+//go:generate stringer -type=LoadExporterKind
+type LoadExporterKind int
 
 const (
-	ExporterInc LoadExporter = iota
+	ExporterInc LoadExporterKind = iota
 	ExporterStatic
 	ExporterRandCyclic
 	ExporterOscillate
@@ -29,7 +29,7 @@ const (
 
 type (
 	ExporterSpec struct {
-		Exporter LoadExporter
+		Exporter LoadExporterKind
 		Count    int
 	}
 	ExporterSpecList []ExporterSpec
@@ -109,31 +109,8 @@ func Run(cfg Config) {
 	stopPrometheus := harness.StartPrometheus(mainctx, cfg.PrometheusPath, cfg.ExtraArgs)
 	defer stopPrometheus()
 
-	log.Printf("starting exporters: %s", cfg.Exporters.String())
 	le := loadgen.NewLoadExporterInternal(mainctx, SdCfgDir)
-	exporterCount := 0
-	for _, exporterSpec := range cfg.Exporters {
-		for i := 0; i < exporterSpec.Count; i++ {
-			var exporter loadgen.HttpExporter
-			switch exporterSpec.Exporter {
-			case ExporterInc:
-				exporter = loadgen.NewHttpExporter(loadgen.NewIncCollector(100, 100))
-			case ExporterStatic:
-				exporter = loadgen.NewHttpExporter(loadgen.NewStaticCollector(100, 100))
-			case ExporterRandCyclic:
-				exporter = loadgen.NewHttpExporter(loadgen.NewRandCyclicCollector(100, 100, 100000))
-			case ExporterOscillate:
-				exporter = loadgen.NewReplayHandler(loadgen.NewHttpExporter(loadgen.NewIncCollector(100, 100)))
-			default:
-				log.Fatalf("invalid exporter '%s'", exporterSpec.Exporter)
-			}
-			if err := le.AddTarget(cfg.FirstPort+exporterCount, exporterSpec.Exporter.String(), exporter); err != nil {
-				log.Fatalf("Error starting exporter: %v", err)
-			} else {
-				exporterCount++
-			}
-		}
-	}
+	startExporters(le, cfg.Exporters, cfg.FirstPort)
 
 	startTime := time.Now()
 	time.Sleep(cfg.TestDuration)
@@ -153,6 +130,33 @@ func Run(cfg Config) {
 		}
 		log.Printf("Expected %d, got %d", expectedSum, actualSum)
 		time.Sleep(5 * time.Second)
+	}
+}
+
+func startExporters(le loadgen.LoadExporter, esl ExporterSpecList, firstPort int) {
+	log.Printf("starting exporters: %s", esl.String())
+	exporterCount := 0
+	for _, exporterSpec := range esl {
+		for i := 0; i < exporterSpec.Count; i++ {
+			var exporter loadgen.HttpExporter
+			switch exporterSpec.Exporter {
+			case ExporterInc:
+				exporter = loadgen.NewHttpExporter(loadgen.NewIncCollector(100, 100))
+			case ExporterStatic:
+				exporter = loadgen.NewHttpExporter(loadgen.NewStaticCollector(100, 100))
+			case ExporterRandCyclic:
+				exporter = loadgen.NewHttpExporter(loadgen.NewRandCyclicCollector(100, 100, 100000))
+			case ExporterOscillate:
+				exporter = loadgen.NewReplayHandler(loadgen.NewHttpExporter(loadgen.NewIncCollector(100, 100)))
+			default:
+				log.Fatalf("invalid exporter '%s'", exporterSpec.Exporter)
+			}
+			if err := le.AddTarget(firstPort+exporterCount, exporterSpec.Exporter.String(), exporter); err != nil {
+				log.Fatalf("Error starting exporter: %v", err)
+			} else {
+				exporterCount++
+			}
+		}
 	}
 }
 
