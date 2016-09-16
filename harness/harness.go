@@ -11,17 +11,6 @@ import (
 	"time"
 )
 
-type Config struct {
-	Rmdata         bool
-	FirstPort      int
-	NumExporters   int
-	PrometheusPath string
-	ScrapeInterval time.Duration
-	TestDuration   time.Duration
-	ExtraArgs      []string
-	Exporter       string
-}
-
 func SetupDataDir(dir string, rm bool) {
 	_, err := os.Open(dir)
 	if os.IsNotExist(err) {

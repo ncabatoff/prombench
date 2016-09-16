@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"github.com/ncabatoff/prombench"
-	"github.com/ncabatoff/prombench/harness"
 	"github.com/prometheus/client_golang/prometheus"
 	"net/http"
 	_ "net/http/pprof"
@@ -14,9 +13,8 @@ func main() {
 	var (
 		firstPort = flag.Int("first-port", 10000,
 			"First port to assign to load exporters.")
-		numExporters = flag.Int("num-exporters", 3,
-			"Number of exporters to run.")
-		rmdata = flag.Bool("rmdata", false,
+		exporters = &prombench.ExporterSpecList{prombench.ExporterSpec{prombench.ExporterInc, 3}}
+		rmdata    = flag.Bool("rmdata", false,
 			"delete the data dir before starting Prometheus")
 		prometheusPath = flag.String("prometheus-path", "prometheus",
 			"path to prometheus executable")
@@ -24,20 +22,18 @@ func main() {
 			"scrape interval")
 		testDuration = flag.Duration("test-duration", time.Minute,
 			"test duration")
-		exporter = flag.String("exporter", "inc",
-			"one of: inc, static, randcyclic, oscillate")
 	)
+	flag.Var(exporters, "exporters", "Comma-separated list of exporter:count, where exporter is one of: inc, static, randcyclic, oscillate")
 	flag.Parse()
 	http.Handle("/metrics", prometheus.Handler())
 	go http.ListenAndServe("localhost:9999", nil)
-	prombench.Run(harness.Config{
+	prombench.Run(prombench.Config{
 		FirstPort:      *firstPort,
-		NumExporters:   *numExporters,
+		Exporters:      *exporters,
 		Rmdata:         *rmdata,
 		PrometheusPath: *prometheusPath,
 		ScrapeInterval: *scrapeInterval,
 		TestDuration:   *testDuration,
-		Exporter:       *exporter,
 		ExtraArgs:      flag.Args(),
 	})
 }

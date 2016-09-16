@@ -26,7 +26,9 @@ of the prombench command line, after --, e.g.
 
 # Exporters
 
-The `-exporter` flag selects which load exporter to use.
+The `-exporters` flag is a comma-separated list specifying which load exporters
+to use and how many, e.g. inc:2,static:3 would launch 2 inc exporters and 3
+static exporters.
 
 The `inc` exporter increments the value of each metric on each scrape.
 

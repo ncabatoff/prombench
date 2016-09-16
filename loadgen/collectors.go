@@ -42,8 +42,8 @@ func (t *incCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 }
 
-func (t *incCollector) Sum() int {
-	return len(t.descs) * (t.labelCount) * t.cycle * (t.cycle + 1) / 2
+func (t *incCollector) Sum() (int, error) {
+	return len(t.descs) * (t.labelCount) * t.cycle * (t.cycle + 1) / 2, nil
 }
 
 type (
@@ -85,8 +85,8 @@ func (t *staticCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 }
 
-func (t *staticCollector) Sum() int {
-	return len(t.descs) * (t.labelCount) * t.cycle
+func (t *staticCollector) Sum() (int, error) {
+	return len(t.descs) * (t.labelCount) * t.cycle, nil
 }
 
 type (
@@ -139,6 +139,6 @@ func (t *randCyclicCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 }
 
-func (t *randCyclicCollector) Sum() int {
-	return t.sumvalues * t.cycle
+func (t *randCyclicCollector) Sum() (int, error) {
+	return t.sumvalues * t.cycle, nil
 }

@@ -8,6 +8,8 @@ import (
 	"github.com/prometheus/client_golang/api/prometheus"
 	"github.com/prometheus/common/model"
 	"log"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -15,31 +17,119 @@ const (
 	SdCfgDir = "sd_configs"
 )
 
-func Run(cfg harness.Config) {
+//go:generate stringer -type=LoadExporter
+type LoadExporter int
+
+const (
+	ExporterInc LoadExporter = iota
+	ExporterStatic
+	ExporterRandCyclic
+	ExporterOscillate
+)
+
+type (
+	ExporterSpec struct {
+		Exporter LoadExporter
+		Count    int
+	}
+	ExporterSpecList []ExporterSpec
+
+	Config struct {
+		Rmdata         bool
+		FirstPort      int
+		PrometheusPath string
+		ScrapeInterval time.Duration
+		TestDuration   time.Duration
+		ExtraArgs      []string
+		Exporters      ExporterSpecList
+	}
+)
+
+func (esl *ExporterSpecList) String() string {
+	ss := make([]string, len(*esl))
+	for i, es := range *esl {
+		ss[i] = es.String()
+	}
+	return strings.Join(ss, ",")
+}
+
+func (esl *ExporterSpecList) Get() interface{} {
+	return *esl
+}
+
+func (esl *ExporterSpecList) Set(v string) error {
+	ss := strings.Split(v, ",")
+	*esl = make([]ExporterSpec, len(ss))
+	for i, s := range ss {
+		if err := (*esl)[i].Set(s); err != nil {
+			return fmt.Errorf("error parsing exporter spec list '%s', spec '%s' has error: %v", v, s, err)
+		}
+	}
+	return nil
+}
+
+func (e *ExporterSpec) String() string {
+	return fmt.Sprintf("%s:%d", e.Exporter, e.Count)
+}
+
+func (e *ExporterSpec) Get() interface{} {
+	return *e
+}
+
+func (e *ExporterSpec) Set(v string) error {
+	pieces := strings.SplitN(v, ":", 2)
+	if len(pieces) != 2 {
+		return fmt.Errorf("bad exporter spec '%s': must be of the form 'name:count'", v)
+	}
+
+	switch pieces[0] {
+	case "inc":
+		e.Exporter = ExporterInc
+	case "static":
+		e.Exporter = ExporterStatic
+	case "randcyclic":
+		e.Exporter = ExporterRandCyclic
+	case "oscillate":
+		e.Exporter = ExporterOscillate
+	default:
+		return fmt.Errorf("invalid exporter name '%s'", pieces[0])
+	}
+	if c, err := strconv.Atoi(pieces[1]); err != nil || c <= 0 {
+		return fmt.Errorf("invalid exporter count '%s'", pieces[1])
+	} else {
+		e.Count = c
+	}
+	return nil
+}
+
+func Run(cfg Config) {
 	mainctx := context.Background()
 	harness.SetupDataDir("data", cfg.Rmdata)
 	harness.SetupPrometheusConfig(SdCfgDir, cfg.ScrapeInterval)
 	stopPrometheus := harness.StartPrometheus(mainctx, cfg.PrometheusPath, cfg.ExtraArgs)
 	defer stopPrometheus()
 
-	exporterProvider := func() loadgen.HttpExporter {
-		switch cfg.Exporter {
-		case "inc":
-			return loadgen.NewHttpExporter(loadgen.NewIncCollector(100, 100))
-		case "static":
-			return loadgen.NewHttpExporter(loadgen.NewStaticCollector(100, 100))
-		case "randcyclic":
-			return loadgen.NewHttpExporter(loadgen.NewRandCyclicCollector(100, 100, 100000))
-		case "oscillate":
-			return loadgen.NewReplayHandler(loadgen.NewHttpExporter(loadgen.NewIncCollector(100, 100)))
-		default:
-			panic(fmt.Sprintf("invalid exporter name '%s'", cfg.Exporter))
-		}
-	}
-	le := loadgen.NewLoadExporterInternal(mainctx, SdCfgDir, exporterProvider)
-	for i := 0; i < cfg.NumExporters; i++ {
-		if err := le.AddTarget(cfg.FirstPort + i); err != nil {
-			log.Fatalf("Error starting exporter: %v", err)
+	log.Printf("starting exporters: %s", cfg.Exporters.String())
+	le := loadgen.NewLoadExporterInternal(mainctx, SdCfgDir)
+	exporterCount := 0
+	for _, exporterSpec := range cfg.Exporters {
+		for i := 0; i < exporterSpec.Count; i++ {
+			var exporter loadgen.HttpExporter
+			switch exporterSpec.Exporter {
+			case ExporterInc:
+				exporter = loadgen.NewHttpExporter(loadgen.NewIncCollector(100, 100))
+			case ExporterStatic:
+				exporter = loadgen.NewHttpExporter(loadgen.NewStaticCollector(100, 100))
+			case ExporterRandCyclic:
+				exporter = loadgen.NewHttpExporter(loadgen.NewRandCyclicCollector(100, 100, 100000))
+			case ExporterOscillate:
+				exporter = loadgen.NewReplayHandler(loadgen.NewHttpExporter(loadgen.NewIncCollector(100, 100)))
+			default:
+				log.Fatalf("invalid exporter '%s'", exporterSpec.Exporter)
+			}
+			if err := le.AddTarget(cfg.FirstPort+exporterCount, exporter); err != nil {
+				log.Fatalf("Error starting exporter: %v", err)
+			}
 		}
 	}
 

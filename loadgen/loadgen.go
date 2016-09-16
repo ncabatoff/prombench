@@ -17,18 +17,22 @@ import (
 
 type (
 	LoadExporter interface {
-		AddTarget(port int) error
+		AddTarget(port int, exporter Exporter) error
 		Stop() (int, error)
 	}
 
 	MetricsGenerator interface {
 		prometheus.Collector
-		Sum() int
+		Sum() (int, error)
+	}
+
+	Exporter interface {
+		Sum() (int, error)
 	}
 
 	HttpExporter interface {
 		http.Handler
-		Sum() int
+		Exporter
 	}
 
 	httpExporter struct {
@@ -37,14 +41,13 @@ type (
 	}
 
 	LoadExporterInternal struct {
-		ctx              context.Context
-		sdcfgdir         string
-		cancel           func()
-		sumchan          chan int
-		totalchan        chan int
-		err              error
-		exporterProvider func() HttpExporter
-		wg               sync.WaitGroup
+		ctx       context.Context
+		sdcfgdir  string
+		cancel    func()
+		sumchan   chan int
+		totalchan chan int
+		err       error
+		wg        sync.WaitGroup
 	}
 )
 
@@ -73,15 +76,14 @@ func NewHttpExporter(mg MetricsGenerator) HttpExporter {
 	return httpExporter{promhttp.HandlerFor(reg, promhttp.HandlerOpts{}), mg}
 }
 
-func NewLoadExporterInternal(ctx context.Context, sdcfgdir string, exporterProvider func() HttpExporter) *LoadExporterInternal {
+func NewLoadExporterInternal(ctx context.Context, sdcfgdir string) *LoadExporterInternal {
 	lctx, cancel := context.WithCancel(ctx)
 	lei := &LoadExporterInternal{
-		ctx:              lctx,
-		sdcfgdir:         sdcfgdir,
-		cancel:           cancel,
-		exporterProvider: exporterProvider,
-		sumchan:          make(chan int),
-		totalchan:        make(chan int),
+		ctx:       lctx,
+		sdcfgdir:  sdcfgdir,
+		cancel:    cancel,
+		sumchan:   make(chan int),
+		totalchan: make(chan int),
 	}
 	go func() {
 		var sum int
@@ -100,7 +102,7 @@ func (lei *LoadExporterInternal) Stop() (int, error) {
 	return <-lei.totalchan, nil
 }
 
-func (lei *LoadExporterInternal) AddTarget(port int) error {
+func (lei *LoadExporterInternal) AddTarget(port int, exporter HttpExporter) error {
 	targetAddr := fmt.Sprintf("localhost:%d", port)
 	cfgfilename := filepath.Join(lei.sdcfgdir, fmt.Sprintf("load-%d.json", port))
 	if err := writeSdConfigFile(targetAddr, cfgfilename); err != nil {
@@ -108,7 +110,7 @@ func (lei *LoadExporterInternal) AddTarget(port int) error {
 		return fmt.Errorf("unable to add target: %v", err)
 	}
 
-	go lei.start(targetAddr)
+	go lei.start(targetAddr, exporter)
 
 	return nil
 }
@@ -154,7 +156,12 @@ func (rh *replayHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if rh.dwrs[idx] == nil {
 		rh.dwrs[idx] = newDummyResponseWriter()
 		rh.exporter.ServeHTTP(rh.dwrs[idx], req)
-		rh.dwrs[idx].sum = rh.exporter.Sum()
+		sum, err := rh.exporter.Sum()
+		if err != nil {
+			log.Fatalf("Error fetching exporter sum: %v", err)
+		} else {
+			rh.dwrs[idx].sum += sum
+		}
 		if idx > 0 {
 			rh.dwrs[idx].sum -= rh.dwrs[idx-1].sum
 		}
@@ -173,13 +180,12 @@ func (rh *replayHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	rh.mtx.Unlock()
 }
 
-func (rh *replayHandler) Sum() int {
-	return rh.sum
+func (rh *replayHandler) Sum() (int, error) {
+	return rh.sum, nil
 }
 
-func (lei *LoadExporterInternal) start(addr string) error {
-	handler := lei.exporterProvider()
-	server := &http.Server{Addr: addr, Handler: handler}
+func (lei *LoadExporterInternal) start(addr string, exporter HttpExporter) error {
+	server := &http.Server{Addr: addr, Handler: exporter}
 	hd := &httpdown.HTTP{
 		StopTimeout: 10 * time.Second,
 		KillTimeout: 1 * time.Second,
@@ -198,7 +204,12 @@ func (lei *LoadExporterInternal) start(addr string) error {
 		if err != nil {
 			log.Printf("error stopping HTTP server: %v", err)
 		}
-		lei.sumchan <- handler.Sum()
+		sum, err := exporter.Sum()
+		if err != nil {
+			log.Printf("error fetching exporter sum: %v", err)
+		} else {
+			lei.sumchan <- sum
+		}
 		lei.wg.Done()
 	}()
 
