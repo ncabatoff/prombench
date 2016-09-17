@@ -16,9 +16,14 @@ import (
 )
 
 type (
+	InstanceSum struct {
+		Instance string
+		Sum      int
+	}
+
 	LoadExporter interface {
 		AddTarget(port int, job string, exporter Exporter) error
-		Stop() (int, error)
+		Stop() ([]InstanceSum, error)
 	}
 
 	MetricsGenerator interface {
@@ -44,8 +49,8 @@ type (
 		ctx       context.Context
 		sdcfgdir  string
 		cancel    func()
-		sumchan   chan int
-		totalchan chan int
+		sumchan   chan InstanceSum
+		totalchan chan []InstanceSum
 		err       error
 		wg        sync.WaitGroup
 	}
@@ -83,20 +88,20 @@ func NewLoadExporterInternal(ctx context.Context, sdcfgdir string) *LoadExporter
 		ctx:       lctx,
 		sdcfgdir:  sdcfgdir,
 		cancel:    cancel,
-		sumchan:   make(chan int),
-		totalchan: make(chan int),
+		sumchan:   make(chan InstanceSum),
+		totalchan: make(chan []InstanceSum),
 	}
 	go func() {
-		var sum int
+		var sums []InstanceSum
 		for s := range lei.sumchan {
-			sum += s
+			sums = append(sums, s)
 		}
-		lei.totalchan <- sum
+		lei.totalchan <- sums
 	}()
 	return lei
 }
 
-func (lei *LoadExporterInternal) Stop() (int, error) {
+func (lei *LoadExporterInternal) Stop() ([]InstanceSum, error) {
 	lei.cancel()
 	lei.wg.Wait()
 	close(lei.sumchan)
@@ -215,7 +220,7 @@ func (lei *LoadExporterInternal) start(addr string, exporter HttpExporter) error
 		if err != nil {
 			log.Printf("error fetching exporter sum: %v", err)
 		} else {
-			lei.sumchan <- sum
+			lei.sumchan <- InstanceSum{addr, sum}
 		}
 		lei.wg.Done()
 	}()

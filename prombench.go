@@ -154,23 +154,34 @@ func Run(cfg Config) {
 
 	startTime := time.Now()
 	time.Sleep(cfg.TestDuration)
-	expectedSum, err := le.Stop()
-	log.Printf("sum=%d, err=%v", expectedSum, err)
-	for {
-		ttime := time.Since(startTime)
-		ttimestr := fmt.Sprintf("%ds", int(1+ttime.Seconds()))
-		query := fmt.Sprintf(`sum(sum_over_time({__name__=~"test.+"}[%s]))`, ttimestr)
-		vect := queryPrometheusVector("http://localhost:9090", query)
-		actualSum := -1
-		if len(vect) > 0 {
-			actualSum = int(vect[0].Value)
+	expectedSums, err := le.Stop()
+	log.Printf("sums=%v, err=%v", expectedSums, err)
+	var totalDelta int
+	for _, instsum := range expectedSums {
+		expectedSum, instance := instsum.Sum, instsum.Instance
+		var delta int
+		for i := 0; i < 2; i++ {
+			ttime := time.Since(startTime)
+			ttimestr := fmt.Sprintf("%ds", int(1+ttime.Seconds()))
+			query := fmt.Sprintf(`sum(sum_over_time({__name__=~"test.+", instance="%s"}[%s]))`, instance, ttimestr)
+			vect := queryPrometheusVector("http://localhost:9090", query)
+			actualSum := -1
+			if len(vect) > 0 {
+				actualSum = int(vect[0].Value)
+			}
+			delta = expectedSum - actualSum
+			if delta == 0 {
+				break
+			}
+			log.Printf("Expected %d, got %d (delta=%d)", expectedSum, actualSum, delta)
+			time.Sleep(5 * time.Second)
 		}
-		if expectedSum == actualSum {
-			break
+		if delta < 0 {
+			delta = -delta
 		}
-		log.Printf("Expected %d, got %d", expectedSum, actualSum)
-		time.Sleep(5 * time.Second)
+		totalDelta += delta
 	}
+	log.Printf("total delta=%d", totalDelta)
 }
 
 func startExporters(le loadgen.LoadExporter, esl ExporterSpecList, firstPort int) {
