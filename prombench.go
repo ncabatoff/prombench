@@ -14,10 +14,6 @@ import (
 	"time"
 )
 
-const (
-	SdCfgDir = "sd_configs"
-)
-
 //go:generate stringer -type=LoadExporterKind
 type LoadExporterKind int
 
@@ -36,14 +32,15 @@ type (
 	ExporterSpecList []ExporterSpec
 
 	Config struct {
-		Rmdata         bool
-		FirstPort      int
-		PrometheusPath string
-		ScrapeInterval time.Duration
-		TestDuration   time.Duration
-		TestRetention  time.Duration
-		ExtraArgs      []string
-		Exporters      ExporterSpecList
+		TestDirectory   string
+		RmTestDirectory bool
+		FirstPort       int
+		PrometheusPath  string
+		ScrapeInterval  time.Duration
+		TestDuration    time.Duration
+		TestRetention   time.Duration
+		ExtraArgs       []string
+		Exporters       ExporterSpecList
 	}
 )
 
@@ -152,8 +149,7 @@ func (epac *extraPrometheusArgsCollector) Collect(ch chan<- prometheus.Metric) {
 
 func Run(cfg Config) {
 	mainctx := context.Background()
-	harness.SetupDataDir("data", cfg.Rmdata)
-	harness.SetupPrometheusConfig(SdCfgDir, cfg.ScrapeInterval)
+	h := harness.NewHarness(cfg.TestDirectory, cfg.RmTestDirectory, cfg.ScrapeInterval)
 	extraArgs := cfg.ExtraArgs
 	if cfg.TestRetention > 0 {
 		extraArgs = append(extraArgs, "-storage.local.retention",
@@ -162,10 +158,10 @@ func Run(cfg Config) {
 	if len(extraArgs) > 0 {
 		prometheus.MustRegister(newExtraPrometheusArgsCollector(extraArgs, cfg.TestRetention))
 	}
-	stopPrometheus := harness.StartPrometheus(mainctx, cfg.PrometheusPath, extraArgs)
+	stopPrometheus := h.StartPrometheus(mainctx, cfg.PrometheusPath, extraArgs)
 	defer stopPrometheus()
 
-	le := loadgen.NewLoadExporterInternal(mainctx, SdCfgDir)
+	le := loadgen.NewLoadExporterInternal(mainctx, h.GetSdCfgDir())
 	startExporters(le, cfg.Exporters, cfg.FirstPort)
 
 	startTime := time.Now()

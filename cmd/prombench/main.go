@@ -22,10 +22,12 @@ func main() {
 		firstPort = flag.Int("first-port", 10000,
 			"First port to assign to load exporters.")
 		exporters = &prombench.ExporterSpecList{prombench.ExporterSpec{prombench.ExporterInc, 3}}
-		rmdata    = flag.Bool("rmdata", false,
-			"delete the data dir before starting Prometheus")
+		rmtestdir = flag.Bool("rmtestdir", false,
+			"delete the test dir if present")
 		scrapeInterval = flag.Duration("scrape-interval", time.Second,
 			"scrape interval")
+		testDirectory = flag.String("test-directory", "prombench",
+			"directory in which all writes will take place")
 		testDuration = flag.Duration("test-duration", time.Minute,
 			"test duration")
 		testRetention = flag.Duration("test-retention", 5*time.Minute,
@@ -44,13 +46,14 @@ func main() {
 	http.Handle("/metrics", prometheus.Handler())
 	go http.ListenAndServe(":9999", nil)
 	prombench.Run(prombench.Config{
-		FirstPort:      *firstPort,
-		Exporters:      *exporters,
-		Rmdata:         *rmdata,
-		PrometheusPath: promPath,
-		ScrapeInterval: *scrapeInterval,
-		TestDuration:   *testDuration,
-		TestRetention:  *testRetention,
-		ExtraArgs:      extraArgs,
+		FirstPort:       *firstPort,
+		Exporters:       *exporters,
+		TestDirectory:   *testDirectory,
+		RmTestDirectory: *rmtestdir,
+		PrometheusPath:  promPath,
+		ScrapeInterval:  *scrapeInterval,
+		TestDuration:    *testDuration,
+		TestRetention:   *testRetention,
+		ExtraArgs:       extraArgs,
 	})
 }

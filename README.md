@@ -11,8 +11,8 @@ just below the tipping point.  For now it just generates a static load.
 # Usage
 
 If the prometheus binary is in your PATH, you can run it without any arguments.
-It won't run if the 'data' dir already exists, so either remove it yourself
-between invocations or use the -rmdata option.
+It won't run if the test dir ("prombench" by default) already exists, so either
+remove it yourself between invocations or use the -rmtestdir option.
 
 Each exporter generates 100 metrics with 100 labels, or 10000 real metrics.  I
 can run about 30 such exporters on my system (8GB RAM, AMD FX(tm)-6300) at 1s
