@@ -41,6 +41,7 @@ type (
 		PrometheusPath string
 		ScrapeInterval time.Duration
 		TestDuration   time.Duration
+		TestRetention  time.Duration
 		ExtraArgs      []string
 		Exporters      ExporterSpecList
 	}
@@ -108,7 +109,7 @@ type extraPrometheusArgsCollector struct {
 	metrics []prometheus.Metric
 }
 
-func newExtraPrometheusArgsCollector(args []string) *extraPrometheusArgsCollector {
+func newExtraPrometheusArgsCollector(args []string, retention time.Duration) *extraPrometheusArgsCollector {
 	epac := extraPrometheusArgsCollector{}
 	for i := 0; i < len(args)-1; i += 2 {
 		val, err := strconv.Atoi(args[i+1])
@@ -121,6 +122,16 @@ func newExtraPrometheusArgsCollector(args []string) *extraPrometheusArgsCollecto
 			epac.metrics = append(epac.metrics, prometheus.MustNewConstMetric(desc,
 				prometheus.GaugeValue, float64(val)))
 		}
+	}
+	if retention > 0 {
+		nodashes := "storage.local.retention"
+		name := "prometheus_arg_" + strings.Replace(strings.Replace(nodashes, "-", "_", -1), ".", "_", -1) + "_seconds"
+		help := fmt.Sprintf("value of prometheus -%s option in seconds", nodashes)
+		desc := prometheus.NewDesc(name, help, nil, nil)
+		epac.descs = append(epac.descs, desc)
+		epac.metrics = append(epac.metrics, prometheus.MustNewConstMetric(desc,
+			prometheus.GaugeValue, retention.Seconds()))
+
 	}
 	return &epac
 }
@@ -140,13 +151,18 @@ func (epac *extraPrometheusArgsCollector) Collect(ch chan<- prometheus.Metric) {
 }
 
 func Run(cfg Config) {
-	if len(cfg.ExtraArgs) > 0 {
-		prometheus.MustRegister(newExtraPrometheusArgsCollector(cfg.ExtraArgs))
-	}
 	mainctx := context.Background()
 	harness.SetupDataDir("data", cfg.Rmdata)
 	harness.SetupPrometheusConfig(SdCfgDir, cfg.ScrapeInterval)
-	stopPrometheus := harness.StartPrometheus(mainctx, cfg.PrometheusPath, cfg.ExtraArgs)
+	extraArgs := cfg.ExtraArgs
+	if cfg.TestRetention > 0 {
+		extraArgs = append(extraArgs, "-storage.local.retention",
+			fmt.Sprintf("%ds", int(cfg.TestRetention.Seconds())))
+	}
+	if len(extraArgs) > 0 {
+		prometheus.MustRegister(newExtraPrometheusArgsCollector(extraArgs, cfg.TestRetention))
+	}
+	stopPrometheus := harness.StartPrometheus(mainctx, cfg.PrometheusPath, extraArgs)
 	defer stopPrometheus()
 
 	le := loadgen.NewLoadExporterInternal(mainctx, SdCfgDir)
@@ -160,9 +176,19 @@ func Run(cfg Config) {
 	for _, instsum := range expectedSums {
 		expectedSum, instance := instsum.Sum, instsum.Instance
 		var delta int
+		// ttime is used to work out what our expected sum should be, assuming on average each scrape
+		// yields about the same sum, which isn't true for many non-cyclic/constant exporters, e.g. inc.
+		// To make this approach work for them we'll want to allow for an option to use sum(rate) rather
+		// than sum(sum_over_time).
+		ttime := time.Since(startTime)
+		if ttime > cfg.TestRetention {
+			timeRatio := float64(cfg.TestRetention) / float64(ttime)
+			expectedSum = int(timeRatio * float64(expectedSum))
+		}
 		for i := 0; i < 2; i++ {
-			ttime := time.Since(startTime)
-			ttimestr := fmt.Sprintf("%ds", int(1+ttime.Seconds()))
+			// qtime is how long the query range should be, i.e. it covers from test start to now
+			qtime := time.Since(startTime)
+			ttimestr := fmt.Sprintf("%ds", int(1+qtime.Seconds()))
 			query := fmt.Sprintf(`sum(sum_over_time({__name__=~"test.+", instance="%s"}[%s]))`, instance, ttimestr)
 			vect := queryPrometheusVector("http://localhost:9090", query)
 			actualSum := -1
@@ -170,10 +196,15 @@ func Run(cfg Config) {
 				actualSum = int(vect[0].Value)
 			}
 			delta = expectedSum - actualSum
-			if delta == 0 {
+			deltaPct := int(100 * float64(delta) / float64(expectedSum))
+			log.Printf("Expected %d, got %d (delta=%d or %d%%)", expectedSum, actualSum, delta, deltaPct)
+			absratio := deltaPct
+			if absratio < 0 {
+				absratio = -absratio
+			}
+			if absratio <= 15 {
 				break
 			}
-			log.Printf("Expected %d, got %d (delta=%d)", expectedSum, actualSum, delta)
 			time.Sleep(5 * time.Second)
 		}
 		if delta < 0 {

@@ -22,11 +22,13 @@ func main() {
 			"scrape interval")
 		testDuration = flag.Duration("test-duration", time.Minute,
 			"test duration")
+		testRetention = flag.Duration("test-retention", 5*time.Minute,
+			"retention period: will be passed to Prometheus as storage.local.retention")
 	)
 	flag.Var(exporters, "exporters", "Comma-separated list of exporter:count, where exporter is one of: inc, static, randcyclic, oscillate")
 	flag.Parse()
 	http.Handle("/metrics", prometheus.Handler())
-	go http.ListenAndServe("localhost:9999", nil)
+	go http.ListenAndServe(":9999", nil)
 	prombench.Run(prombench.Config{
 		FirstPort:      *firstPort,
 		Exporters:      *exporters,
@@ -34,6 +36,7 @@ func main() {
 		PrometheusPath: *prometheusPath,
 		ScrapeInterval: *scrapeInterval,
 		TestDuration:   *testDuration,
+		TestRetention:  *testRetention,
 		ExtraArgs:      flag.Args(),
 	})
 }
