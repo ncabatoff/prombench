@@ -9,6 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/model"
 	"log"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -30,6 +31,11 @@ type (
 		Count    int
 	}
 	ExporterSpecList []ExporterSpec
+	RunIntervalSpec  struct {
+		Command  string
+		Interval time.Duration
+	}
+	RunIntervalSpecList []RunIntervalSpec
 
 	Config struct {
 		TestDirectory   string
@@ -41,8 +47,54 @@ type (
 		TestRetention   time.Duration
 		ExtraArgs       []string
 		Exporters       ExporterSpecList
+		RunIntervals    RunIntervalSpecList
 	}
 )
+
+func (r *RunIntervalSpec) String() string {
+	return fmt.Sprintf("%s:%s", r.Interval, r.Command)
+}
+
+func (r *RunIntervalSpec) Get() interface{} {
+	return *r
+}
+
+func (r *RunIntervalSpec) Set(v string) error {
+	pieces := strings.SplitN(v, ":", 2)
+	if len(pieces) != 2 {
+		return fmt.Errorf("bad runinterval spec '%s': must be of the form 'interval:command'", v)
+	}
+	dur, err := time.ParseDuration(pieces[0])
+	if err != nil {
+		return fmt.Errorf("invalid duration in runinterval '%s': %v", v, err)
+	}
+	r.Interval = dur
+	r.Command = pieces[1]
+	return nil
+}
+
+func (rsl *RunIntervalSpecList) String() string {
+	ss := make([]string, len(*rsl))
+	for i, rs := range *rsl {
+		ss[i] = rs.String()
+	}
+	return strings.Join(ss, ",")
+}
+
+func (rsl *RunIntervalSpecList) Get() interface{} {
+	return *rsl
+}
+
+func (rsl *RunIntervalSpecList) Set(v string) error {
+	ss := strings.Split(v, ",")
+	*rsl = make([]RunIntervalSpec, len(ss))
+	for i, s := range ss {
+		if err := (*rsl)[i].Set(s); err != nil {
+			return fmt.Errorf("error parsing run interval spec list '%s', spec '%s' has error: %v", v, s, err)
+		}
+	}
+	return nil
+}
 
 func (esl *ExporterSpecList) String() string {
 	ss := make([]string, len(*esl))
@@ -164,6 +216,9 @@ func Run(cfg Config) {
 	le := loadgen.NewLoadExporterInternal(mainctx, h.GetSdCfgDir())
 	startExporters(le, cfg.Exporters, cfg.FirstPort)
 
+	cancelRunIntervals := startRunIntervals(mainctx, cfg.RunIntervals)
+	defer cancelRunIntervals()
+
 	startTime := time.Now()
 	time.Sleep(cfg.TestDuration)
 	expectedSums, err := le.Stop()
@@ -209,6 +264,42 @@ func Run(cfg Config) {
 		totalDelta += delta
 	}
 	log.Printf("total delta=%d", totalDelta)
+}
+
+func startRunIntervals(ctx context.Context, ris RunIntervalSpecList) func() {
+	if len(ris) == 0 {
+		return func() {}
+	}
+	myctx, cancel := context.WithCancel(ctx)
+	for _, ri := range ris {
+		startRunInterval(myctx, ri)
+	}
+	return cancel
+}
+
+func startRunInterval(ctx context.Context, ri RunIntervalSpec) func() {
+	myctx, cancel := context.WithCancel(ctx)
+	go func() {
+		ticker := time.NewTicker(ri.Interval)
+		done := myctx.Done()
+		for {
+			select {
+			case <-done:
+				ticker.Stop()
+				cancel()
+				break
+			case <-ticker.C:
+				log.Printf("running %s", ri.Command)
+				cmd := exec.CommandContext(myctx, "sh", "-c", ri.Command)
+				err := cmd.Run()
+				if err != nil {
+					log.Printf("error running background command '%s': %v", ri.Command, err)
+				}
+				log.Printf("ran %s", ri.Command)
+			}
+		}
+	}()
+	return cancel
 }
 
 func startExporters(le loadgen.LoadExporter, esl ExporterSpecList, firstPort int) {

@@ -32,8 +32,10 @@ func main() {
 			"test duration")
 		testRetention = flag.Duration("test-retention", 5*time.Minute,
 			"retention period: will be passed to Prometheus as storage.local.retention")
+		runIntervals = &prombench.RunIntervalSpecList{}
 	)
 	flag.Var(exporters, "exporters", "Comma-separated list of exporter:count, where exporter is one of: inc, static, randcyclic, oscillate")
+	flag.Var(runIntervals, "run-every", "Comma-separated list of interval:command, invoke command every interval duration")
 	flag.Parse()
 
 	extraArgs := flag.Args()
@@ -55,5 +57,6 @@ func main() {
 		TestDuration:    *testDuration,
 		TestRetention:   *testRetention,
 		ExtraArgs:       extraArgs,
+		RunIntervals:    *runIntervals,
 	})
 }
