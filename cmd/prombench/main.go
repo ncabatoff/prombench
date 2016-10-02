@@ -2,22 +2,28 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"github.com/ncabatoff/prombench"
 	"github.com/prometheus/client_golang/prometheus"
 	"net/http"
 	_ "net/http/pprof"
+	"os"
 	"time"
 )
 
 func main() {
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s [options] [-- path-to-prometheus prometheus-options]\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "\nIf no -- is present, will execute 'prometheus' based on $PATH.\n")
+		fmt.Fprintf(os.Stderr, "\nOptions:\n")
+		flag.PrintDefaults()
+	}
 	var (
 		firstPort = flag.Int("first-port", 10000,
 			"First port to assign to load exporters.")
 		exporters = &prombench.ExporterSpecList{prombench.ExporterSpec{prombench.ExporterInc, 3}}
 		rmdata    = flag.Bool("rmdata", false,
 			"delete the data dir before starting Prometheus")
-		prometheusPath = flag.String("prometheus-path", "prometheus",
-			"path to prometheus executable")
 		scrapeInterval = flag.Duration("scrape-interval", time.Second,
 			"scrape interval")
 		testDuration = flag.Duration("test-duration", time.Minute,
@@ -27,16 +33,24 @@ func main() {
 	)
 	flag.Var(exporters, "exporters", "Comma-separated list of exporter:count, where exporter is one of: inc, static, randcyclic, oscillate")
 	flag.Parse()
+
+	extraArgs := flag.Args()
+	promPath := "prometheus"
+	if len(extraArgs) > 0 {
+		promPath = extraArgs[0]
+		extraArgs = extraArgs[1:]
+	}
+
 	http.Handle("/metrics", prometheus.Handler())
 	go http.ListenAndServe(":9999", nil)
 	prombench.Run(prombench.Config{
 		FirstPort:      *firstPort,
 		Exporters:      *exporters,
 		Rmdata:         *rmdata,
-		PrometheusPath: *prometheusPath,
+		PrometheusPath: promPath,
 		ScrapeInterval: *scrapeInterval,
 		TestDuration:   *testDuration,
 		TestRetention:  *testRetention,
-		ExtraArgs:      flag.Args(),
+		ExtraArgs:      extraArgs,
 	})
 }

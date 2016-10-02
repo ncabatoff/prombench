@@ -19,10 +19,11 @@ can run about 30 such exporters on my system (8GB RAM, AMD FX(tm)-6300) at 1s
 scrape interval for a total load of 300K samples/second.  Going above 300K
 samples/second requires more RAM and will probably require tuning Prometheus,
 see the tips in the [storage](https://prometheus.io/docs/operating/storage/)
-part of the docs.  You can provide Prometheus command-line arguments at the end
-of the prombench command line, after --, e.g.
+part of the docs.  You can override the default Prometheus command ("prometheus")
+with a path and command-line arguments at the end of the prombench command line, after --,
+e.g.
 
-    ./prombench -num-exporters 60 -- -storage.local.memory-chunks 2097152 -storage.local.max-chunks-to-persist 1048576 
+    ./prombench -exporters inc:20 -- ~/src/prometheus/prometheus -storage.local.memory-chunks 2097152 -storage.local.max-chunks-to-persist 1048576 
 
 # Exporters
 
