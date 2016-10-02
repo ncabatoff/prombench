@@ -291,9 +291,9 @@ func startRunInterval(ctx context.Context, ri RunIntervalSpec) func() {
 			case <-ticker.C:
 				log.Printf("running %s", ri.Command)
 				cmd := exec.CommandContext(myctx, "sh", "-c", ri.Command)
-				err := cmd.Run()
+				out, err := cmd.CombinedOutput()
 				if err != nil {
-					log.Printf("error running background command '%s': %v", ri.Command, err)
+					log.Printf("error running background command '%s': %v; output follows:\n%s", ri.Command, err, string(out))
 				}
 				log.Printf("ran %s", ri.Command)
 			}
