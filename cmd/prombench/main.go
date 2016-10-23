@@ -29,6 +29,8 @@ func main() {
 			"delete the test dir if present")
 		scrapeInterval = flag.Duration("scrape-interval", time.Second,
 			"scrape interval")
+		adaptiveInterval = flag.Duration("adaptive-interval", 0,
+			"if nonzero, interval at which to try adding new exporters if not yet too loaded")
 		testDirectory = flag.String("test-directory", "prombench-data",
 			"directory in which all writes will take place")
 		testDuration = flag.Duration("test-duration", time.Minute,
@@ -40,7 +42,7 @@ func main() {
 		maxQueryRetries = flag.Int("max-query-retries", 0,
 			"how many query retries to do until maxDeltaRatio is satisfied")
 		listenAddress = flag.String("web.listen-address", ":9999",
-			"Address on which to expose metrics and web interface.")
+			"Address on which to expose prombench metrics.")
 		runIntervals = &prombench.RunIntervalSpecList{}
 	)
 	flag.Var(exporters, "exporters", "Comma-separated list of exporter:count, where exporter is one of: inc, static, randcyclic, oscillate")
@@ -57,18 +59,19 @@ func main() {
 	http.Handle("/metrics", prometheus.Handler())
 	go http.ListenAndServe(*listenAddress, nil)
 	prombench.Run(prombench.Config{
-		FirstPort:       *firstPort,
-		Exporters:       *exporters,
-		TestDirectory:   *testDirectory,
-		RmTestDirectory: *rmtestdir,
-		PrometheusPath:  promPath,
-		ScrapeInterval:  *scrapeInterval,
-		TestDuration:    *testDuration,
-		TestRetention:   *testRetention,
-		MaxDeltaRatio:   *maxDeltaRatio,
-		MaxQueryRetries: *maxQueryRetries,
-		ExtraArgs:       extraArgs,
-		RunIntervals:    *runIntervals,
+		FirstPort:        *firstPort,
+		Exporters:        *exporters,
+		TestDirectory:    *testDirectory,
+		RmTestDirectory:  *rmtestdir,
+		PrometheusPath:   promPath,
+		ScrapeInterval:   *scrapeInterval,
+		TestDuration:     *testDuration,
+		TestRetention:    *testRetention,
+		MaxDeltaRatio:    *maxDeltaRatio,
+		MaxQueryRetries:  *maxQueryRetries,
+		ExtraArgs:        extraArgs,
+		RunIntervals:     *runIntervals,
+		AdaptiveInterval: *adaptiveInterval,
 	})
 
 	writeMetrics(*listenAddress, *testDirectory)

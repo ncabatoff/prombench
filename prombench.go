@@ -58,18 +58,19 @@ type (
 	RunIntervalSpecList []RunIntervalSpec
 
 	Config struct {
-		TestDirectory   string
-		RmTestDirectory bool
-		FirstPort       int
-		PrometheusPath  string
-		ScrapeInterval  time.Duration
-		TestDuration    time.Duration
-		TestRetention   time.Duration
-		ExtraArgs       []string
-		Exporters       ExporterSpecList
-		RunIntervals    RunIntervalSpecList
-		MaxDeltaRatio   float64
-		MaxQueryRetries int
+		TestDirectory    string
+		RmTestDirectory  bool
+		FirstPort        int
+		PrometheusPath   string
+		ScrapeInterval   time.Duration
+		TestDuration     time.Duration
+		TestRetention    time.Duration
+		ExtraArgs        []string
+		Exporters        ExporterSpecList
+		RunIntervals     RunIntervalSpecList
+		MaxDeltaRatio    float64
+		MaxQueryRetries  int
+		AdaptiveInterval time.Duration
 	}
 )
 
@@ -221,6 +222,37 @@ func (epac *extraPrometheusArgsCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 }
 
+func startExportersAdaptive(ctx context.Context, le loadgen.LoadExporter, firstPort int, cfg Config) context.CancelFunc {
+	myctx, cancel := context.WithCancel(ctx)
+	go func() {
+		query := fmt.Sprintf(`prometheus_target_interval_length_seconds{quantile="0.99", interval="%s"}`,
+			cfg.ScrapeInterval)
+		ticker := time.NewTicker(cfg.AdaptiveInterval)
+		done := myctx.Done()
+		for {
+			select {
+			case <-done:
+				ticker.Stop()
+				cancel()
+				break
+			case <-ticker.C:
+				vect := queryPrometheusVector(myctx, "http://localhost:9090", query)
+				if len(vect) != 1 {
+					log.Printf("error querying scrape interval: %d results returned", len(vect))
+					continue
+				}
+				secs := time.Duration(float64(time.Second) * float64(vect[0].Value))
+				deltaSecs := secs - cfg.ScrapeInterval
+				if deltaSecs < cfg.ScrapeInterval/20 {
+					log.Printf("99th percentile of scrape interval %s within 5%% (delta %s), adding targets", cfg.ScrapeInterval, deltaSecs)
+					firstPort += startExporters(le, cfg.Exporters, firstPort)
+				}
+			}
+		}
+	}()
+	return cancel
+}
+
 func Run(cfg Config) {
 	mainctx := context.Background()
 	h := harness.NewHarness(cfg.TestDirectory, cfg.RmTestDirectory, cfg.ScrapeInterval)
@@ -236,13 +268,18 @@ func Run(cfg Config) {
 	defer stopPrometheus()
 
 	le := loadgen.NewLoadExporterInternal(mainctx, h.GetSdCfgDir())
-	startExporters(le, cfg.Exporters, cfg.FirstPort)
+	exporterCount := startExporters(le, cfg.Exporters, cfg.FirstPort)
+	cancelAdaptive := func() {}
+	if cfg.AdaptiveInterval > 0 {
+		cancelAdaptive = startExportersAdaptive(mainctx, le, cfg.FirstPort+exporterCount, cfg)
+	}
 
 	cancelRunIntervals := startRunIntervals(mainctx, cfg.RunIntervals)
 	defer cancelRunIntervals()
 
 	startTime := time.Now()
 	time.Sleep(cfg.TestDuration)
+	cancelAdaptive()
 	expectedSums, err := le.Stop()
 	log.Printf("sums=%v, err=%v", expectedSums, err)
 	var totalDelta int
@@ -259,13 +296,13 @@ func Run(cfg Config) {
 			expectedSum = int(timeRatio * float64(expectedSum))
 		}
 		for i := 0; i <= cfg.MaxQueryRetries; i++ {
-			log.Printf("query %d (maxretries=%d", i, cfg.MaxQueryRetries)
+			log.Printf("query %s %d (maxretries=%d)", instance, i+1, cfg.MaxQueryRetries)
 			// qtime is how long the query range should be, i.e. it covers from test start to now
 			qtime := time.Since(startTime)
 			ttimestr := fmt.Sprintf("%ds", int(1+qtime.Seconds()))
 			query := fmt.Sprintf(`sum(sum_over_time({__name__=~"test.+", instance="%s"}[%s]))`, instance, ttimestr)
 			queryStart := time.Now()
-			vect := queryPrometheusVector("http://localhost:9090", query)
+			vect := queryPrometheusVector(mainctx, "http://localhost:9090", query)
 			QueryTime.WithLabelValues("run1", query).Observe(time.Since(queryStart).Seconds())
 
 			actualSum := -1
@@ -328,7 +365,7 @@ func startRunInterval(ctx context.Context, ri RunIntervalSpec) func() {
 	return cancel
 }
 
-func startExporters(le loadgen.LoadExporter, esl ExporterSpecList, firstPort int) {
+func startExporters(le loadgen.LoadExporter, esl ExporterSpecList, firstPort int) int {
 	log.Printf("starting exporters: %s", esl.String())
 	exporterCount := 0
 	for _, exporterSpec := range esl {
@@ -353,21 +390,22 @@ func startExporters(le loadgen.LoadExporter, esl ExporterSpecList, firstPort int
 			}
 		}
 	}
+	return exporterCount
 }
 
-func queryPrometheusVector(url, query string) model.Vector {
+func queryPrometheusVector(ctx context.Context, url, query string) model.Vector {
 	cfg := api.Config{Address: url, Transport: api.DefaultTransport}
 	client, err := api.New(cfg)
 	if err != nil {
 		log.Fatalf("error building client: %v", err)
 	}
 	qapi := api.NewQueryAPI(client)
-	log.Printf("issueing query: %s", query)
-	result, err := qapi.Query(context.TODO(), query, time.Now())
+	// log.Printf("issueing query: %s", query)
+	result, err := qapi.Query(ctx, query, time.Now())
 	if err != nil {
 		log.Printf("error performing query: %v", err)
 		return nil
 	}
-	log.Printf("prometheus query result: %v", result)
+	// log.Printf("prometheus query result: %v", result)
 	return result.(model.Vector)
 }
