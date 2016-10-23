@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"github.com/ncabatoff/prombench"
 	"github.com/prometheus/client_golang/prometheus"
+	"io"
+	"log"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -26,12 +29,18 @@ func main() {
 			"delete the test dir if present")
 		scrapeInterval = flag.Duration("scrape-interval", time.Second,
 			"scrape interval")
-		testDirectory = flag.String("test-directory", "prombench",
+		testDirectory = flag.String("test-directory", "prombench-data",
 			"directory in which all writes will take place")
 		testDuration = flag.Duration("test-duration", time.Minute,
 			"test duration")
 		testRetention = flag.Duration("test-retention", 5*time.Minute,
 			"retention period: will be passed to Prometheus as storage.local.retention")
+		maxDeltaRatio = flag.Float64("max-delta-ratio", 0.15,
+			"absolute deviation from expected value tolerated without query retry [0-1]")
+		maxQueryRetries = flag.Int("max-query-retries", 0,
+			"how many query retries to do until maxDeltaRatio is satisfied")
+		listenAddress = flag.String("web.listen-address", ":9999",
+			"Address on which to expose metrics and web interface.")
 		runIntervals = &prombench.RunIntervalSpecList{}
 	)
 	flag.Var(exporters, "exporters", "Comma-separated list of exporter:count, where exporter is one of: inc, static, randcyclic, oscillate")
@@ -46,7 +55,7 @@ func main() {
 	}
 
 	http.Handle("/metrics", prometheus.Handler())
-	go http.ListenAndServe(":9999", nil)
+	go http.ListenAndServe(*listenAddress, nil)
 	prombench.Run(prombench.Config{
 		FirstPort:       *firstPort,
 		Exporters:       *exporters,
@@ -56,7 +65,34 @@ func main() {
 		ScrapeInterval:  *scrapeInterval,
 		TestDuration:    *testDuration,
 		TestRetention:   *testRetention,
+		MaxDeltaRatio:   *maxDeltaRatio,
+		MaxQueryRetries: *maxQueryRetries,
 		ExtraArgs:       extraArgs,
 		RunIntervals:    *runIntervals,
 	})
+
+	writeMetrics(*listenAddress, *testDirectory)
+	time.Sleep(5 * time.Second)
+}
+
+func writeMetrics(listenAddr, testdir string) {
+	resp, err := http.Get("http://" + listenAddr + "/metrics")
+	if err != nil {
+		log.Fatalf("error querying my own metrics: %v", err)
+	}
+	fn := filepath.Join(testdir, "metrics.txt")
+	metricsFile, err := os.Create(fn)
+	if err != nil {
+		log.Fatalf("error writing metrics to %q: %v", fn, err)
+	}
+
+	_, err = io.Copy(metricsFile, resp.Body)
+	if err != nil {
+		log.Fatalf("error writing metrics: %v", err)
+	}
+	resp.Body.Close()
+	err = metricsFile.Close()
+	if err != nil {
+		log.Fatalf("error writing metrics: %v", err)
+	}
 }

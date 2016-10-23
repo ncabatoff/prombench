@@ -25,6 +25,26 @@ const (
 	ExporterOscillate
 )
 
+var (
+	QueryTime *prometheus.HistogramVec = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "prombench",
+			Subsystem: "query",
+			Name:      "latency_seconds",
+			Help:      "time to execute query",
+			ConstLabels: prometheus.Labels{
+				// Only benchmark supported for now so constant
+				"benchmark": "insert-then-sum",
+			},
+		},
+		[]string{"run_name", "query"},
+	)
+)
+
+func init() {
+	prometheus.MustRegister(QueryTime)
+}
+
 type (
 	ExporterSpec struct {
 		Exporter LoadExporterKind
@@ -48,6 +68,8 @@ type (
 		ExtraArgs       []string
 		Exporters       ExporterSpecList
 		RunIntervals    RunIntervalSpecList
+		MaxDeltaRatio   float64
+		MaxQueryRetries int
 	}
 )
 
@@ -236,24 +258,28 @@ func Run(cfg Config) {
 			timeRatio := float64(cfg.TestRetention) / float64(ttime)
 			expectedSum = int(timeRatio * float64(expectedSum))
 		}
-		for i := 0; i < 2; i++ {
+		for i := 0; i <= cfg.MaxQueryRetries; i++ {
+			log.Printf("query %d (maxretries=%d", i, cfg.MaxQueryRetries)
 			// qtime is how long the query range should be, i.e. it covers from test start to now
 			qtime := time.Since(startTime)
 			ttimestr := fmt.Sprintf("%ds", int(1+qtime.Seconds()))
 			query := fmt.Sprintf(`sum(sum_over_time({__name__=~"test.+", instance="%s"}[%s]))`, instance, ttimestr)
+			queryStart := time.Now()
 			vect := queryPrometheusVector("http://localhost:9090", query)
+			QueryTime.WithLabelValues("run1", query).Observe(time.Since(queryStart).Seconds())
+
 			actualSum := -1
 			if len(vect) > 0 {
 				actualSum = int(vect[0].Value)
 			}
 			delta = expectedSum - actualSum
-			deltaPct := int(100 * float64(delta) / float64(expectedSum))
-			log.Printf("Expected %d, got %d (delta=%d or %d%%)", expectedSum, actualSum, delta, deltaPct)
-			absratio := deltaPct
-			if absratio < 0 {
-				absratio = -absratio
+			deltaRatio := float64(delta) / float64(expectedSum)
+			log.Printf("Expected %d, got %d (delta=%d or %.0f%%)", expectedSum, actualSum, delta, 100*deltaRatio)
+			absRatio := deltaRatio
+			if absRatio < 0 {
+				absRatio = -absRatio
 			}
-			if absratio <= 15 {
+			if absRatio <= cfg.MaxDeltaRatio {
 				break
 			}
 			time.Sleep(5 * time.Second)
