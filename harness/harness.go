@@ -24,10 +24,10 @@ func (h *Harness) GetSdCfgDir() string {
 	return filepath.Join(h.testDirectory, sdCfgDir)
 }
 
-func NewHarness(testDirectory string, rmIfPresent bool, scrapeInterval time.Duration) *Harness {
+func NewHarness(testDirectory string, rmIfPresent bool, scrapeInterval time.Duration, benchListenAddr, promListenAddr string) *Harness {
 	SetupTestDir(testDirectory, rmIfPresent)
 	h := &Harness{testDirectory}
-	h.setupPrometheusConfig(scrapeInterval)
+	h.setupPrometheusConfig(scrapeInterval, benchListenAddr, promListenAddr)
 	return h
 }
 
@@ -49,24 +49,24 @@ func SetupTestDir(dir string, rm bool) {
 	}
 }
 
-func (h *Harness) setupPrometheusConfig(scrapeInterval time.Duration) {
+func (h *Harness) setupPrometheusConfig(scrapeInterval time.Duration, benchListenAddr, promListenAddr string) {
 	cfgstr := fmt.Sprintf(`global:
 scrape_configs:
   - job_name: 'prometheus'
     scrape_interval: '1s'
     static_configs:
-      - targets: ['localhost:9090']
+      - targets: [%q]
 
   - job_name: 'prombench'
     scrape_interval: '1s'
     static_configs:
-      - targets: ['localhost:9999']
+      - targets: [%q]
 
   - job_name: 'test'
     scrape_interval: '%s'
     file_sd_configs:
       - files:
-        - '%s/*.json'`, scrapeInterval, sdCfgDir)
+        - '%s/*.json'`, promListenAddr, benchListenAddr, scrapeInterval, sdCfgDir)
 
 	cfgfilename := filepath.Join(h.testDirectory, "prometheus.yml")
 	if err := ioutil.WriteFile(cfgfilename, []byte(cfgstr), 0600); err != nil {
@@ -98,12 +98,15 @@ func (h *Harness) StartPrometheus(ctx context.Context, prompath string, promargs
 	cmd.Stdout = logfile
 	cmd.Stderr = logfile
 	go func() {
-		log.Printf("running Prometheus: %s %v", prompath, promargs)
+		log.Printf("running Prometheus in dir %q: %s %v", cmd.Dir, prompath, promargs)
 		if err := cmd.Run(); err != nil {
-			log.Printf("Prometheus returned %v", err)
+			log.Printf("Prometheus returned %v, see log %q", err, promlog)
+		} else {
+			log.Printf("Prometheus exited, see log %q", promlog)
 		}
 		done <- struct{}{}
 	}()
+
 	return func() {
 		cmd.Process.Signal(syscall.SIGTERM)
 		timer := time.NewTimer(30 * time.Second)

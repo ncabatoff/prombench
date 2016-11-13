@@ -41,8 +41,10 @@ func main() {
 			"absolute deviation from expected value tolerated without query retry [0-1]")
 		maxQueryRetries = flag.Int("max-query-retries", 0,
 			"how many query retries to do until maxDeltaRatio is satisfied")
-		listenAddress = flag.String("web.listen-address", ":9999",
+		benchListenAddress = flag.String("web.listen-address", ":9999",
 			"Address on which to expose prombench metrics.")
+		promListenAddress = flag.String("prometheus.listen-address", ":8989",
+			"Address on which the Prometheus being tested exposes metrics and serves queries.")
 		runIntervals = &prombench.RunIntervalSpecList{}
 	)
 	flag.Var(exporters, "exporters", "Comma-separated list of exporter:count, where exporter is one of: inc, static, randcyclic, oscillate")
@@ -57,24 +59,26 @@ func main() {
 	}
 
 	http.Handle("/metrics", prometheus.Handler())
-	go http.ListenAndServe(*listenAddress, nil)
+	go http.ListenAndServe(*benchListenAddress, nil)
 	prombench.Run(prombench.Config{
-		FirstPort:        *firstPort,
-		Exporters:        *exporters,
-		TestDirectory:    *testDirectory,
-		RmTestDirectory:  *rmtestdir,
-		PrometheusPath:   promPath,
-		ScrapeInterval:   *scrapeInterval,
-		TestDuration:     *testDuration,
-		TestRetention:    *testRetention,
-		MaxDeltaRatio:    *maxDeltaRatio,
-		MaxQueryRetries:  *maxQueryRetries,
-		ExtraArgs:        extraArgs,
-		RunIntervals:     *runIntervals,
-		AdaptiveInterval: *adaptiveInterval,
+		FirstPort:               *firstPort,
+		Exporters:               *exporters,
+		TestDirectory:           *testDirectory,
+		RmTestDirectory:         *rmtestdir,
+		PrometheusPath:          promPath,
+		ScrapeInterval:          *scrapeInterval,
+		TestDuration:            *testDuration,
+		TestRetention:           *testRetention,
+		MaxDeltaRatio:           *maxDeltaRatio,
+		MaxQueryRetries:         *maxQueryRetries,
+		ExtraArgs:               extraArgs,
+		RunIntervals:            *runIntervals,
+		AdaptiveInterval:        *adaptiveInterval,
+		PrombenchListenAddress:  *benchListenAddress,
+		PrometheusListenAddress: *promListenAddress,
 	})
 
-	writeMetrics(*listenAddress, *testDirectory)
+	writeMetrics(*benchListenAddress, *testDirectory)
 	time.Sleep(5 * time.Second)
 }
 

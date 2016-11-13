@@ -9,6 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/model"
 	"log"
+	"net"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -58,21 +59,35 @@ type (
 	RunIntervalSpecList []RunIntervalSpec
 
 	Config struct {
-		TestDirectory    string
-		RmTestDirectory  bool
-		FirstPort        int
-		PrometheusPath   string
-		ScrapeInterval   time.Duration
-		TestDuration     time.Duration
-		TestRetention    time.Duration
-		ExtraArgs        []string
-		Exporters        ExporterSpecList
-		RunIntervals     RunIntervalSpecList
-		MaxDeltaRatio    float64
-		MaxQueryRetries  int
-		AdaptiveInterval time.Duration
+		TestDirectory           string
+		RmTestDirectory         bool
+		FirstPort               int
+		PrometheusPath          string
+		ScrapeInterval          time.Duration
+		TestDuration            time.Duration
+		TestRetention           time.Duration
+		ExtraArgs               []string
+		Exporters               ExporterSpecList
+		RunIntervals            RunIntervalSpecList
+		MaxDeltaRatio           float64
+		MaxQueryRetries         int
+		AdaptiveInterval        time.Duration
+		PrombenchListenAddress  string
+		PrometheusListenAddress string
 	}
 )
+
+// TODO check for errors when the Config is created
+func (c Config) PrometheusInstance() (string, error) {
+	host, port, err := net.SplitHostPort(c.PrometheusListenAddress)
+	if err != nil {
+		return "", err
+	}
+	if len(host) == 0 {
+		host = "localhost"
+	}
+	return net.JoinHostPort(host, port), nil
+}
 
 func (r *RunIntervalSpec) String() string {
 	return fmt.Sprintf("%s:%s", r.Interval, r.Command)
@@ -223,6 +238,12 @@ func (epac *extraPrometheusArgsCollector) Collect(ch chan<- prometheus.Metric) {
 }
 
 func startExportersAdaptive(ctx context.Context, le loadgen.LoadExporter, firstPort int, cfg Config) context.CancelFunc {
+	instance, err := cfg.PrometheusInstance()
+	if err != nil {
+		log.Fatalf("can't construct query URL: %v", err)
+	}
+	queryUrl := "http://" + instance
+
 	myctx, cancel := context.WithCancel(ctx)
 	go func() {
 		query := fmt.Sprintf(`prometheus_target_interval_length_seconds{quantile="0.99", interval="%s"}`,
@@ -236,7 +257,7 @@ func startExportersAdaptive(ctx context.Context, le loadgen.LoadExporter, firstP
 				cancel()
 				break
 			case <-ticker.C:
-				vect := queryPrometheusVector(myctx, "http://localhost:9090", query)
+				vect := queryPrometheusVector(myctx, queryUrl, query)
 				if len(vect) != 1 {
 					log.Printf("error querying scrape interval: %d results returned", len(vect))
 					continue
@@ -253,10 +274,8 @@ func startExportersAdaptive(ctx context.Context, le loadgen.LoadExporter, firstP
 	return cancel
 }
 
-func Run(cfg Config) {
-	mainctx := context.Background()
-	h := harness.NewHarness(cfg.TestDirectory, cfg.RmTestDirectory, cfg.ScrapeInterval)
-	extraArgs := cfg.ExtraArgs
+func getExtraArgs(cfg Config) []string {
+	extraArgs := append([]string{}, cfg.ExtraArgs...)
 	if cfg.TestRetention > 0 {
 		extraArgs = append(extraArgs, "-storage.local.retention",
 			fmt.Sprintf("%ds", int(cfg.TestRetention.Seconds())))
@@ -264,8 +283,49 @@ func Run(cfg Config) {
 	if len(extraArgs) > 0 {
 		prometheus.MustRegister(newExtraPrometheusArgsCollector(extraArgs, cfg.TestRetention))
 	}
-	stopPrometheus := h.StartPrometheus(mainctx, cfg.PrometheusPath, extraArgs)
+	return append(extraArgs, "-web.listen-address", cfg.PrometheusListenAddress)
+}
+
+func waitForPrometheus(ctx context.Context, instance string) {
+	queryUrl := "http://" + instance
+	// TODO make timeout configurable
+	endTime := time.Now().Add(time.Second * 10)
+	for {
+		timeLeft := endTime.Sub(time.Now())
+		if timeLeft < 0 {
+			log.Fatalf("Timed out waiting for Prometheus to respond.")
+		}
+
+		myctx, cancel := context.WithTimeout(ctx, timeLeft)
+		query := fmt.Sprintf(`up{job="prometheus", instance="%s"}`, instance)
+		vect := queryPrometheusVector(myctx, queryUrl, query)
+		cancel()
+
+		if len(vect) > 0 {
+			if vect[0].Value > 0 {
+				log.Printf("prometheus is up")
+				return
+			}
+		}
+
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+func Run(cfg Config) {
+	instance, err := cfg.PrometheusInstance()
+	if err != nil {
+		log.Fatalf("can't construct query URL: %v", err)
+	}
+	queryUrl := "http://" + instance
+
+	mainctx := context.Background()
+	h := harness.NewHarness(cfg.TestDirectory, cfg.RmTestDirectory, cfg.ScrapeInterval, cfg.PrombenchListenAddress, cfg.PrometheusListenAddress)
+
+	stopPrometheus := h.StartPrometheus(mainctx, cfg.PrometheusPath, getExtraArgs(cfg))
 	defer stopPrometheus()
+
+	waitForPrometheus(mainctx, instance)
 
 	le := loadgen.NewLoadExporterInternal(mainctx, h.GetSdCfgDir())
 	exporterCount := startExporters(le, cfg.Exporters, cfg.FirstPort)
@@ -302,7 +362,7 @@ func Run(cfg Config) {
 			ttimestr := fmt.Sprintf("%ds", int(1+qtime.Seconds()))
 			query := fmt.Sprintf(`sum(sum_over_time({__name__=~"test.+", instance="%s"}[%s]))`, instance, ttimestr)
 			queryStart := time.Now()
-			vect := queryPrometheusVector(mainctx, "http://localhost:9090", query)
+			vect := queryPrometheusVector(mainctx, queryUrl, query)
 			QueryTime.WithLabelValues("run1", query).Observe(time.Since(queryStart).Seconds())
 
 			actualSum := -1
@@ -400,7 +460,7 @@ func queryPrometheusVector(ctx context.Context, url, query string) model.Vector 
 		log.Fatalf("error building client: %v", err)
 	}
 	qapi := api.NewQueryAPI(client)
-	// log.Printf("issueing query: %s", query)
+	// log.Printf("issueing query: %s to %s", query, url)
 	result, err := qapi.Query(ctx, query, time.Now())
 	if err != nil {
 		log.Printf("error performing query: %v", err)
