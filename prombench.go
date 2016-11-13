@@ -286,14 +286,15 @@ func getExtraArgs(cfg Config) []string {
 	return append(extraArgs, "-web.listen-address", cfg.PrometheusListenAddress)
 }
 
-func waitForPrometheus(ctx context.Context, instance string) {
+func waitForPrometheus(ctx context.Context, instance string) bool {
 	queryUrl := "http://" + instance
 	// TODO make timeout configurable
 	endTime := time.Now().Add(time.Second * 10)
 	for {
 		timeLeft := endTime.Sub(time.Now())
 		if timeLeft < 0 {
-			log.Fatalf("Timed out waiting for Prometheus to respond.")
+			log.Printf("Timed out waiting for Prometheus to respond.")
+			return false
 		}
 
 		myctx, cancel := context.WithTimeout(ctx, timeLeft)
@@ -304,7 +305,7 @@ func waitForPrometheus(ctx context.Context, instance string) {
 		if len(vect) > 0 {
 			if vect[0].Value > 0 {
 				log.Printf("prometheus is up")
-				return
+				return true
 			}
 		}
 
@@ -320,12 +321,14 @@ func Run(cfg Config) {
 	queryUrl := "http://" + instance
 
 	mainctx := context.Background()
-	h := harness.NewHarness(cfg.TestDirectory, cfg.RmTestDirectory, cfg.ScrapeInterval, cfg.PrombenchListenAddress, cfg.PrometheusListenAddress)
+	h := harness.NewHarness(cfg.TestDirectory, cfg.RmTestDirectory, cfg.ScrapeInterval, cfg.PrombenchListenAddress, instance)
 
 	stopPrometheus := h.StartPrometheus(mainctx, cfg.PrometheusPath, getExtraArgs(cfg))
 	defer stopPrometheus()
 
-	waitForPrometheus(mainctx, instance)
+	if !waitForPrometheus(mainctx, instance) {
+		return
+	}
 
 	le := loadgen.NewLoadExporterInternal(mainctx, h.GetSdCfgDir())
 	exporterCount := startExporters(le, cfg.Exporters, cfg.FirstPort)
